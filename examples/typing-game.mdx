@@ -1,85 +1,167 @@
 ---
 title: Typing Game
-description: A typing speed game demonstrating advanced patterns (coming soon)
+description: Multiplayer typing speed game with Effect RPC backend
 ---
 
-<Note>
-The typing game example is currently under development. Check back soon or explore other examples in the meantime.
-</Note>
+## What You'll Learn
 
-## Other Game Examples
+This example demonstrates advanced Foldkit patterns for building a real-time multiplayer application:
 
-While the typing game example is being prepared, check out these interactive examples:
+- Effect RPC client-server communication
+- Real-time streaming subscriptions
+- Multi-page routing with nested models
+- Game state synchronization across clients
+- Countdown timers and game phases
+- WPM and accuracy calculations
+
+<Card title="Source Code" icon="github" href="https://github.com/devinjameson/foldkit/tree/main/packages/typing-game">
+  View the complete source code on GitHub
+</Card>
+
+## Overview
+
+The Typing Game is a multiplayer typing speed game where players compete in real-time to type passages of text as quickly and accurately as possible. It demonstrates a full-stack Foldkit application with:
+
+- **Client** — Foldkit application with routing, RPC commands, and subscriptions
+- **Server** — Effect RPC server managing rooms, games, and player state
+- **Shared** — Type-safe RPC definitions and schemas shared between client and server
+
+## Architecture
+
+### Model Structure
+
+The application uses a nested model with route-driven pages:
+
+```typescript
+const Model = S.Struct({
+  route: AppRoute,
+  home: Home.Model.Model,
+  room: Room.Model.Model,
+})
+```
+
+Each route has its own isolated model, message type, update function, and view.
+
+### Game Flow
+
+1. **Home Page** — Create or join a room
+2. **Room Page** — Wait for players, start game, play, view results
+3. **Game Phases** — Waiting → GetReady → Countdown → Playing → Finished
+
+### RPC Integration
+
+The client communicates with the server using Effect RPC:
+
+```typescript
+export const createRoomRpc = Rpc.make('createRoom', {
+  payload: S.Struct({ username: S.String }),
+  success: RoomAndPlayer,
+})
+
+export const subscribeToRoomRpc = Rpc.make('subscribeToRoom', {
+  payload: S.Struct({ roomId: S.String, playerId: S.String }),
+  success: RoomWithPlayerProgress,
+  error: RoomNotFoundError,
+  stream: true,
+})
+```
+
+### Real-Time Updates
+
+The room page subscribes to server updates using a streaming RPC subscription that pushes room state changes to all connected clients in real time.
+
+## Key Features
+
+### Multiplayer Rooms
+
+Players create or join rooms identified by unique IDs. The room host can start the game when ready.
+
+### Game Phases
+
+The game progresses through distinct phases:
+
+- **Waiting** — Players joining the room
+- **GetReady** — Brief preparation phase
+- **Countdown** — 3-2-1 countdown before game starts
+- **Playing** — Players type the passage as fast as possible
+- **Finished** — Display scoreboard with WPM and accuracy
+
+### Progress Tracking
+
+As players type, their progress is sent to the server and broadcast to other players in real-time, enabling live progress visualization.
+
+### Scoring
+
+When the game finishes, the server calculates:
+
+- **WPM** (Words Per Minute) — Typing speed
+- **Accuracy** — Percentage of correctly typed characters
+- **Characters Typed** — Total characters entered
+
+## Project Structure
+
+```
+packages/typing-game/
+├── client/          # Foldkit frontend application
+│   └── src/
+│       ├── page/
+│       │   ├── home/   # Create/join room page
+│       │   └── room/   # Game room page
+│       ├── main.ts     # Application entry point
+│       ├── model.ts    # Root model
+│       ├── route.ts    # Route definitions
+│       └── rpc.ts      # RPC client setup
+├── server/          # Effect RPC backend
+└── shared/          # Shared RPC schemas
+    └── src/
+        └── index.ts    # RPC definitions
+```
+
+## Running the Example
+
+The typing game requires both client and server to run:
+
+```bash
+# Terminal 1: Start the server
+pnpm dev:typing-game:server
+
+# Terminal 2: Start the client
+pnpm dev:typing-game:client
+```
+
+Then open `http://localhost:5173` in multiple browser windows to test multiplayer functionality.
+
+## What Makes This Example Special
+
+### Full-Stack Type Safety
+
+The shared RPC schemas ensure complete type safety between client and server. The client can't call a non-existent RPC, and the server can't return data that doesn't match the schema.
+
+### Model-Driven Subscriptions
+
+The subscription to room updates is managed by Foldkit's subscription system, which automatically starts and stops the stream based on the current route and model state.
+
+### Nested Architecture
+
+Each page (Home, Room) has its own isolated Model, Message, Update, and View. The root update function delegates to page-specific update handlers based on the current route.
+
+### Real-Time State Sync
+
+Changes to room state (new players joining, game starting, progress updates) are instantly synchronized across all connected clients through the streaming RPC subscription.
+
+## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Snake Game" icon="gamepad" href="/examples/snake">
-    A classic Snake game with keyboard controls and collision detection
-  </Card>
-  <Card title="Stopwatch" icon="clock" href="/examples/stopwatch">
-    A stopwatch demonstrating time-based subscriptions
-  </Card>
-</CardGroup>
-
-## Coming Soon
-
-The typing game example will demonstrate:
-
-- Real-time input validation
-- Word-by-word progress tracking
-- Accuracy and WPM calculation
-- Game timer and countdown
-- Multiple difficulty levels
-- High score persistence
-
-## Get Notified
-
-Want to be notified when this example is ready? Watch the Foldkit repository on GitHub:
-
-<Card title="Watch on GitHub" icon="github" href="https://github.com/foldkit/foldkit">
-  Star and watch the repository for updates
-</Card>
-
-## Contribute
-
-Interested in contributing this example? Check out the contribution guidelines:
-
-<Card title="Contributing" icon="code" href="https://github.com/foldkit/foldkit/blob/main/CONTRIBUTING.md">
-  Learn how to contribute to Foldkit
-</Card>
-
-## Explore All Examples
-
-Browse all available examples:
-
-<CardGroup cols={3}>
-  <Card title="Counter" icon="calculator" href="/examples/counter">
-    Basic counter
-  </Card>
-  <Card title="Stopwatch" icon="clock" href="/examples/stopwatch">
-    Time-based updates
-  </Card>
-  <Card title="Weather" icon="cloud" href="/examples/weather">
-    HTTP requests
-  </Card>
-  <Card title="Todo" icon="check" href="/examples/todo">
-    CRUD with storage
-  </Card>
-  <Card title="Form" icon="input" href="/examples/form">
-    Validation
-  </Card>
-  <Card title="Routing" icon="route" href="/examples/routing">
-    Multi-page apps
-  </Card>
-  <Card title="Shopping Cart" icon="shopping-cart" href="/examples/shopping-cart">
-    E-commerce
-  </Card>
-  <Card title="Snake" icon="gamepad" href="/examples/snake">
-    Game dev
+  <Card title="Auth Example" icon="lock" href="/examples/auth">
+    Authentication with model-as-union pattern
   </Card>
   <Card title="WebSocket Chat" icon="message" href="/examples/websocket-chat">
-    Real-time chat
+    Real-time chat with managed resources
   </Card>
-  <Card title="Auth" icon="lock" href="/examples/auth">
-    Authentication
+  <Card title="Effect RPC Guide" icon="bolt" href="/guides/effects">
+    Learn more about using Effect in commands
+  </Card>
+  <Card title="Routing Guide" icon="route" href="/guides/routing">
+    Master type-safe routing in Foldkit
   </Card>
 </CardGroup>
