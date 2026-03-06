@@ -1,0 +1,143 @@
+{
+  "projectType": "framework",
+  "projectName": "Foldkit",
+  "projectDescription": "Elm-inspired UI framework for TypeScript powered by Effect-TS",
+  "theme": "palm",
+  "primaryColor": "#040404",
+  "lightColor": "#6c6c6c",
+  "darkColor": "#a9a9a9",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/model",
+              "concepts/messages",
+              "concepts/update",
+              "concepts/view",
+              "concepts/commands",
+              "concepts/subscriptions",
+              "concepts/managed-resources"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/routing",
+              "guides/field-validation",
+              "guides/ui-components",
+              "guides/effects",
+              "guides/hmr"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/counter",
+              "examples/stopwatch",
+              "examples/weather",
+              "examples/todo",
+              "examples/form",
+              "examples/routing",
+              "examples/shopping-cart",
+              "examples/snake",
+              "examples/websocket-chat",
+              "examples/auth",
+              "examples/typing-game"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core",
+            "pages": [
+              "api/runtime",
+              "api/message",
+              "api/command",
+              "api/subscription",
+              "api/managed-resource"
+            ]
+          },
+          {
+            "group": "Views & HTML",
+            "pages": [
+              "api/html",
+              "api/ui"
+            ]
+          },
+          {
+            "group": "Routing",
+            "pages": [
+              "api/route",
+              "api/navigation",
+              "api/url"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "api/field-validation",
+              "api/schema",
+              "api/struct",
+              "api/task"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Elm Architecture pattern with Model-Update-View",
+    "Effect-TS powered side effect management",
+    "Type-safe bidirectional routing with parser combinators",
+    "Model-driven subscriptions and managed resources",
+    "Accessible UI component primitives (Dialog, Menu, Tabs, Listbox, etc.)",
+    "Field validation with discriminated unions",
+    "Virtual DOM with Snabbdom",
+    "State-preserving HMR with Vite plugin",
+    "CLI scaffolding tool (create-foldkit-app)"
+  ],
+  "publicApiSurface": [
+    "Runtime.makeElement",
+    "Runtime.makeApplication",
+    "Runtime.run",
+    "Command (Effect-based side effects)",
+    "Subscription.makeSubscriptions",
+    "ManagedResource.makeManagedResources",
+    "Route.literal",
+    "Route.param",
+    "Route.string",
+    "Route.int",
+    "Route.oneOf",
+    "Route.parseUrlWithFallback",
+    "Html.html (view builder DSL)",
+    "FieldValidation.makeField",
+    "FieldValidation.required",
+    "FieldValidation.email",
+    "Message.m (message constructor)",
+    "Navigation (browser navigation commands)",
+    "Ui.Dialog",
+    "Ui.Menu",
+    "Ui.Tabs",
+    "Ui.Listbox",
+    "Ui.Combobox",
+    "Ui.Popover",
+    "Ui.Switch",
+    "Ui.Disclosure"
+  ]
+}
