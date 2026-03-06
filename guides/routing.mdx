@@ -1,0 +1,387 @@
+---
+title: "Routing"
+description: "Learn how to use Foldkit's type-safe bidirectional routing system"
+---
+
+## Overview
+
+Foldkit provides a powerful type-safe routing system based on bidirectional parsers. Routes can both parse URLs into typed route values and build URLs from route data, ensuring your navigation links always stay in sync with your route definitions.
+
+## Core Concepts
+
+### Bidirectional Parsers
+
+A `Biparser` is the foundation of Foldkit's routing system. It can:
+- **Parse** URL segments into typed values
+- **Print** typed values back into URL strings
+
+This bidirectional nature eliminates the common issue of navigation links getting out of sync with route handlers.
+
+### Route Definition
+
+Define routes using the `r()` helper from `foldkit/route`:
+
+```typescript
+import { Schema as S } from 'effect'
+import { r } from 'foldkit/route'
+
+const HomeRoute = r('Home')
+const PersonRoute = r('Person', { personId: S.Number })
+const NotFoundRoute = r('NotFound', { path: S.String })
+
+export type HomeRoute = typeof HomeRoute.Type
+export type PersonRoute = typeof PersonRoute.Type
+```
+
+The `r()` function creates a schema-based route constructor with a `_tag` discriminant for pattern matching.
+
+## Building Route Parsers
+
+### Basic Route Segments
+
+#### Root Path
+
+```typescript
+import { Route } from 'foldkit'
+import { pipe } from 'effect'
+
+const homeRouter = pipe(
+  Route.root,
+  Route.mapTo(HomeRoute)
+)
+```
+
+#### Literal Segments
+
+```typescript
+import { literal } from 'foldkit/route'
+
+const aboutRouter = pipe(
+  literal('about'),
+  Route.mapTo(AboutRoute)
+)
+```
+
+#### Dynamic Parameters
+
+```typescript
+import { literal, slash, int } from 'foldkit/route'
+
+const personRouter = pipe(
+  literal('people'),
+  slash(int('personId')),
+  Route.mapTo(PersonRoute)
+)
+// Matches: /people/42 → { _tag: 'Person', personId: 42 }
+```
+
+#### String Parameters
+
+```typescript
+import { string } from 'foldkit/route'
+
+const blogRouter = pipe(
+  literal('blog'),
+  slash(string('slug')),
+  Route.mapTo(BlogPostRoute)
+)
+// Matches: /blog/hello-world → { _tag: 'BlogPost', slug: 'hello-world' }
+```
+
+### Nested Routes
+
+Combine multiple segments using `slash`:
+
+```typescript
+const nestedRouter = pipe(
+  literal('api'),
+  slash(literal('v1')),
+  slash(literal('users')),
+  slash(int('userId')),
+  Route.mapTo(UserApiRoute)
+)
+// Matches: /api/v1/users/123
+```
+
+### Query Parameters
+
+Add query parameters using `Route.query()` with an Effect Schema:
+
+```typescript
+import { Schema as S } from 'effect'
+
+const searchRouter = pipe(
+  literal('search'),
+  Route.query(
+    S.Struct({
+      q: S.String,
+      page: S.OptionFromUndefinedOr(S.Number)
+    })
+  ),
+  Route.mapTo(SearchRoute)
+)
+// Matches: /search?q=foldkit&page=2
+```
+
+<Warning>
+Query parameters are terminal — you cannot use `slash()` after `Route.query()`. The query must be the last operation in your route definition.
+</Warning>
+
+## Combining Multiple Routes
+
+Use `Route.oneOf()` to create a parser that tries multiple routes:
+
+```typescript
+const routeParser = Route.oneOf(
+  personRouter,    // Try /people/:id first
+  peopleRouter,    // Then /people
+  aboutRouter,
+  homeRouter       // Root should be last
+)
+```
+
+<Tip>
+Order matters! Place more specific routes (like `/people/:id`) before less specific ones (like `/people`).
+</Tip>
+
+## Parsing URLs
+
+Convert URLs to route values using `Route.parseUrlWithFallback()`:
+
+```typescript
+const urlToAppRoute = Route.parseUrlWithFallback(
+  routeParser,
+  NotFoundRoute
+)
+
+// In your init function:
+const init: Runtime.ApplicationInit<Model, Message> = (url: Url) => {
+  return [{ route: urlToAppRoute(url) }, []]
+}
+```
+
+The fallback route is used when no parser matches the URL.
+
+## Building URLs from Routes
+
+Each router created with `Route.mapTo()` has a `build()` method:
+
+```typescript
+// Build URLs from route data
+personRouter.build({ personId: 42 })  // "/people/42"
+homeRouter.build({})                   // "/"
+searchRouter.build({ 
+  q: 'foldkit', 
+  page: Option.some(2) 
+})  // "/search?q=foldkit&page=2"
+```
+
+Use these in your views to create navigation links:
+
+```typescript
+const { a, Href } = html<Message>()
+
+a(
+  [Href(personRouter.build({ personId: 42 }))],
+  ['View Person']
+)
+```
+
+## Navigation
+
+### Link Clicks
+
+Handle link clicks in your application's update function:
+
+```typescript
+import { pushUrl, load } from 'foldkit/navigation'
+import { Effect, Match as M } from 'effect'
+
+const ClickedLink = m('ClickedLink', {
+  request: Runtime.UrlRequest,
+})
+
+const update = (model: Model, message: Message) =>
+  M.value(message).pipe(
+    M.tagsExhaustive({
+      ClickedLink: ({ request }) =>
+        M.value(request).pipe(
+          M.tagsExhaustive({
+            Internal: ({ url }) => [
+              model,
+              [pushUrl(urlToString(url)).pipe(Effect.as(NoOp()))]
+            ],
+            External: ({ href }) => [
+              model,
+              [load(href).pipe(Effect.as(NoOp()))]
+            ]
+          })
+        ),
+      // ...
+    })
+  )
+```
+
+### URL Changes
+
+Handle browser URL changes (back/forward navigation):
+
+```typescript
+const ChangedUrl = m('ChangedUrl', { url: Url })
+
+const update = (model: Model, message: Message) =>
+  M.value(message).pipe(
+    M.tagsExhaustive({
+      ChangedUrl: ({ url }) => [
+        evo(model, {
+          route: () => urlToAppRoute(url)
+        }),
+        []
+      ],
+      // ...
+    })
+  )
+```
+
+### Programmatic Navigation
+
+```typescript
+import { pushUrl, replaceUrl } from 'foldkit/navigation'
+
+// Add to history
+const navigateCommand = pushUrl('/about').pipe(Effect.as(NoOp()))
+
+// Replace current URL (no history entry)
+const replaceCommand = replaceUrl('/login').pipe(Effect.as(NoOp()))
+```
+
+## Complete Example
+
+Here's a full routing setup:
+
+```typescript
+import { Schema as S, pipe, Effect, Match as M } from 'effect'
+import { Route, Runtime } from 'foldkit'
+import { literal, slash, int, r } from 'foldkit/route'
+import { pushUrl, replaceUrl } from 'foldkit/navigation'
+import { Url, toString as urlToString } from 'foldkit/url'
+
+// Define routes
+const HomeRoute = r('Home')
+const PeopleRoute = r('People')
+const PersonRoute = r('Person', { personId: S.Number })
+const NotFoundRoute = r('NotFound', { path: S.String })
+
+const AppRoute = S.Union(
+  HomeRoute,
+  PeopleRoute,
+  PersonRoute,
+  NotFoundRoute
+)
+
+type AppRoute = typeof AppRoute.Type
+
+// Create parsers
+const homeRouter = pipe(Route.root, Route.mapTo(HomeRoute))
+const peopleRouter = pipe(literal('people'), Route.mapTo(PeopleRoute))
+const personRouter = pipe(
+  literal('people'),
+  slash(int('personId')),
+  Route.mapTo(PersonRoute)
+)
+
+const routeParser = Route.oneOf(
+  personRouter,  // More specific first
+  peopleRouter,
+  homeRouter
+)
+
+const urlToAppRoute = Route.parseUrlWithFallback(
+  routeParser,
+  NotFoundRoute
+)
+
+// Model
+const Model = S.Struct({
+  route: AppRoute
+})
+
+type Model = typeof Model.Type
+
+// Init
+const init: Runtime.ApplicationInit<Model, Message> = (url: Url) => {
+  return [{ route: urlToAppRoute(url) }, []]
+}
+
+// Browser integration
+const app = Runtime.makeApplication({
+  Model,
+  init,
+  update,
+  view,
+  container: document.getElementById('root')!,
+  browser: {
+    onUrlRequest: request => ClickedLink({ request }),
+    onUrlChange: url => ChangedUrl({ url })
+  }
+})
+```
+
+## View Keying
+
+When your view structure changes based on route, use `keyed` to ensure proper DOM updates:
+
+```typescript
+const view = (model: Model): Html => {
+  const routeContent = M.value(model.route).pipe(
+    M.tagsExhaustive({
+      Home: homeView,
+      People: peopleView,
+      Person: ({ personId }) => personView(personId),
+      NotFound: ({ path }) => notFoundView(path)
+    })
+  )
+
+  return main(
+    [Class('py-8')],
+    [keyed('div')(model.route._tag, [], [routeContent])]
+  )
+}
+```
+
+Keying by route tag prevents the virtual DOM from incorrectly patching one route's layout into another.
+
+## API Reference
+
+### Route Builders
+
+- `literal(segment)` — Matches an exact URL segment
+- `string(name)` — Captures a string parameter
+- `int(name)` — Captures an integer parameter
+- `param(label, parse, print)` — Custom parameter parser
+- `root` — Matches the root path `/`
+- `slash(parser)` — Combines route segments sequentially
+
+### Route Combinators
+
+- `Route.mapTo(constructor)` — Creates a `Router` with `parse` and `build`
+- `Route.oneOf(...parsers)` — Tries multiple parsers in order
+- `Route.query(schema)` — Adds query parameter parsing (terminal)
+- `Route.parseUrlWithFallback(parser, fallback)` — Parses with fallback
+
+### Navigation
+
+- `pushUrl(url)` — Navigate to URL (adds history entry)
+- `replaceUrl(url)` — Replace current URL (no history entry)
+- `load(href)` — Navigate to external URL
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Field Validation" icon="check" href="/guides/field-validation">
+    Learn how to validate form fields with real-time feedback
+  </Card>
+  <Card title="Effects" icon="bolt" href="/guides/effects">
+    Master commands and side effects in Foldkit
+  </Card>
+</CardGroup>

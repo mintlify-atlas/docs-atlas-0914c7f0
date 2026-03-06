@@ -1,122 +1,121 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Foldkit",
+  "theme": "palm",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#040404",
+    "light": "#6c6c6c",
+    "dark": "#a9a9a9"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/ab21095d-4ade-4b2c-9710-029609a87dcc.svg",
+  "logo": {
+    "light": "https://media.brand.dev/40cd8027-c038-477c-869b-cd567a18073a.svg",
+    "dark": "https://media.brand.dev/40cd8027-c038-477c-869b-cd567a18073a.svg"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/devinjameson/foldkit"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/devinjameson/foldkit"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/architecture",
+              "concepts/model",
+              "concepts/messages",
+              "concepts/update",
+              "concepts/view",
+              "concepts/commands",
+              "concepts/subscriptions",
+              "concepts/managed-resources"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Guides",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "guides/routing",
+              "guides/field-validation",
+              "guides/ui-components",
+              "guides/effects",
+              "guides/hmr"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Examples",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "examples/counter",
+              "examples/stopwatch",
+              "examples/weather",
+              "examples/todo",
+              "examples/form",
+              "examples/routing",
+              "examples/shopping-cart",
+              "examples/snake",
+              "examples/websocket-chat",
+              "examples/auth",
+              "examples/typing-game"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Core",
             "pages": [
-              "api-reference/introduction"
+              "api/runtime",
+              "api/message",
+              "api/command",
+              "api/subscription",
+              "api/managed-resource"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Views & HTML",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/html",
+              "api/ui"
+            ]
+          },
+          {
+            "group": "Routing",
+            "pages": [
+              "api/route",
+              "api/navigation",
+              "api/url"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "api/field-validation",
+              "api/schema",
+              "api/struct",
+              "api/task"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

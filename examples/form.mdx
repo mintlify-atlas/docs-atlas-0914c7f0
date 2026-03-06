@@ -1,0 +1,266 @@
+---
+title: Form Validation
+description: Advanced form validation with sync and async field checks
+---
+
+The Form example demonstrates sophisticated form validation patterns including real-time validation, async checks, and field-level error states.
+
+## What You'll Learn
+
+- Field-level validation with `foldkit/fieldValidation`
+- Synchronous validation (required, email, minLength)
+- Asynchronous validation (checking against a service)
+- Validation state management (NotValidated, Validating, Valid, Invalid)
+- Debouncing async validation
+- Form submission with validated data
+
+## Live Demo
+
+<Card title="Form Demo" icon="play" href="https://foldkit.dev/examples/form">
+  Click to see the live form validation example
+</Card>
+
+## Key Features
+
+- 📝 Real-time field validation
+- 🔄 Async validation with loading states
+- ✅ Visual feedback (checkmarks, errors)
+- 🚫 Submit button disabled until form is valid
+- 🎯 Field-specific error messages
+
+## Field Validation States
+
+Each field can be in one of four states:
+
+```typescript
+const StringField = makeField(S.String)
+type StringField = typeof StringField.Union.Type
+
+// States:
+// - NotValidated: Initial state, no validation yet
+// - Validating: Async validation in progress
+// - Valid: All validations passed
+// - Invalid: Validation failed with error messages
+```
+
+## Model Structure
+
+```typescript
+const Model = S.Struct({
+  name: StringField.Union,
+  email: StringField.Union,
+  emailValidationId: S.Number,
+  message: StringField.Union,
+  submission: Submission,
+})
+```
+
+The `emailValidationId` is used to handle race conditions in async validation - only the latest validation result is applied.
+
+## Sync Validation
+
+Synchronous validations run immediately when the field changes:
+
+```typescript
+const nameValidations: ReadonlyArray<Validation<string>> = [
+  FieldValidation.minLength(2, 'Name must be at least 2 characters'),
+]
+
+const emailValidations: ReadonlyArray<Validation<string>> = [
+  FieldValidation.required('Email is required'),
+  FieldValidation.email('Please enter a valid email address'),
+]
+
+const validateName = StringField.validate(nameValidations)
+const validateEmail = StringField.validate(emailValidations)
+```
+
+In the update function:
+
+```typescript
+UpdatedName: ({ value }) => [
+  evo(model, {
+    name: () => validateName(value),
+  }),
+  [],
+]
+```
+
+## Async Validation
+
+Async validation runs after sync validation passes:
+
+```typescript
+const EMAILS_ON_WAITLIST = [
+  'test@example.com',
+  'demo@email.com',
+  'admin@test.com',
+]
+
+const isEmailOnWaitlist = (email: string): Effect.Effect<boolean> =>
+  Effect.gen(function* () {
+    yield* Effect.sleep(Duration.millis(FAKE_API_DELAY_MS))
+    return Array.contains(EMAILS_ON_WAITLIST, email.toLowerCase())
+  })
+
+const validateEmailNotOnWaitlist = (
+  email: string,
+  validationId: number,
+): Command<typeof ValidatedEmail> =>
+  Effect.gen(function* () {
+    if (yield* isEmailOnWaitlist(email)) {
+      return ValidatedEmail({
+        validationId,
+        field: StringField.Invalid({
+          value: email,
+          errors: ['This email is already on our waitlist'],
+        }),
+      })
+    } else {
+      return ValidatedEmail({
+        validationId,
+        field: StringField.Valid({ value: email }),
+      })
+    }
+  })
+```
+
+### Handling Async Validation
+
+When the email field changes:
+
+```typescript
+UpdatedEmail: ({ value }) => {
+  const validateEmailResult = validateEmail(value)
+  const validationId = Number.increment(model.emailValidationId)
+
+  if (validateEmailResult._tag === 'Valid') {
+    return [
+      evo(model, {
+        email: () => StringField.Validating({ value }),
+        emailValidationId: () => validationId,
+      }),
+      [validateEmailNotOnWaitlist(value, validationId)],
+    ]
+  } else {
+    return [
+      evo(model, {
+        email: () => validateEmailResult,
+        emailValidationId: () => validationId,
+      }),
+      [],
+    ]
+  }
+}
+```
+
+### Applying Async Results
+
+When the async validation completes, check the validation ID to avoid race conditions:
+
+```typescript
+ValidatedEmail: ({ validationId, field }) => {
+  if (validationId === model.emailValidationId) {
+    return [
+      evo(model, {
+        email: () => field,
+      }),
+      [],
+    ]
+  } else {
+    return [model, []]
+  }
+}
+```
+
+## Visual Feedback
+
+The view shows different UI based on validation state:
+
+```typescript
+const fieldView = (
+  id: string,
+  labelText: string,
+  field: StringField,
+  onUpdate: (value: string) => Message,
+  type: 'text' | 'email' | 'textarea' = 'text',
+): Html => {
+  const getBorderClass = () =>
+    M.value(field).pipe(
+      M.tagsExhaustive({
+        NotValidated: () => 'border-gray-300',
+        Validating: () => 'border-blue-300',
+        Valid: () => 'border-green-500',
+        Invalid: () => 'border-red-500',
+      }),
+    )
+
+  return div(
+    [Class('mb-4')],
+    [
+      div(
+        [Class('flex items-center gap-2 mb-2')],
+        [
+          label([For(id), Class('text-sm font-medium text-gray-700')], [labelText]),
+          M.value(field).pipe(
+            M.tagsExhaustive({
+              NotValidated: () => empty,
+              Validating: () => span([Class('text-blue-600 text-sm animate-spin')], ['◐']),
+              Valid: () => span([Class('text-green-600 text-sm')], ['✓']),
+              Invalid: () => empty,
+            }),
+          ),
+        ],
+      ),
+      input([Id(id), Value(value), Class(inputClass), OnInput(onUpdate)]),
+      M.value(field).pipe(
+        M.tagsExhaustive({
+          NotValidated: () => empty,
+          Validating: () => div([Class('text-blue-600 text-sm mt-1')], ['Checking...']),
+          Valid: () => empty,
+          Invalid: ({ errors }) =>
+            div([Class('text-red-600 text-sm mt-1')], [Array.headNonEmpty(errors)]),
+        }),
+      ),
+    ],
+  )
+}
+```
+
+## Form Submission
+
+Submit is only allowed when all fields are valid:
+
+```typescript
+const isFormValid = (model: Model): boolean =>
+  Array.every([model.name, model.email], field => field._tag === 'Valid')
+
+ClickedFormSubmit: () => {
+  if (!isFormValid(model)) {
+    return [model, []]
+  }
+  return [
+    evo(model, {
+      submission: () => Submitting(),
+    }),
+    [submitForm(model)],
+  ]
+}
+```
+
+## Complete Source Code
+
+<Card title="form/src/main.ts" icon="github" href="https://github.com/foldkit/foldkit/tree/main/examples/form/src/main.ts">
+  View the complete source code on GitHub (447 lines)
+</Card>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Auth" icon="lock" href="/examples/auth">
+    Build an authentication flow with session management
+  </Card>
+  <Card title="Todo" icon="check" href="/examples/todo">
+    Learn about local storage and persistence
+  </Card>
+</CardGroup>

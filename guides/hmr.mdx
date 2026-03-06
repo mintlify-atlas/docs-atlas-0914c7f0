@@ -1,0 +1,373 @@
+---
+title: "Hot Module Replacement"
+description: "Enable instant updates during development with HMR that preserves your app's state"
+---
+
+## Overview
+
+Foldkit provides built-in Hot Module Replacement (HMR) support that preserves your application's model state across code changes. This means you can edit your view, update logic, or styles and see changes instantly without losing your app's current state.
+
+## Quick Setup
+
+### 1. Install the Vite Plugin
+
+```bash
+npm install --save-dev vite-plugin-foldkit
+```
+
+### 2. Configure Vite
+
+Add the Foldkit plugin to your `vite.config.ts`:
+
+```typescript
+import { defineConfig } from 'vite'
+import { foldkit } from 'vite-plugin-foldkit'
+
+export default defineConfig({
+  plugins: [foldkit()]
+})
+```
+
+### 3. Use Runtime.run()
+
+Make sure you're using `Runtime.run()` to start your application:
+
+```typescript
+import { Runtime } from 'foldkit'
+
+const element = Runtime.makeElement({
+  Model,
+  init,
+  update,
+  view,
+  container: document.getElementById('root')!
+})
+
+// This enables HMR support
+Runtime.run(element)
+```
+
+That's it! HMR is now enabled.
+
+## How It Works
+
+When you make code changes:
+
+1. **Model preservation** — Foldkit serializes your current model state
+2. **Module reload** — Vite reloads the changed modules
+3. **State restoration** — Foldkit restores the preserved model
+4. **View re-render** — Your view renders with the restored state
+
+This happens in milliseconds, giving you instant feedback without losing your place in the app.
+
+## What Gets Preserved
+
+### ✅ Preserved
+
+- **Model state** — All model fields
+- **Form inputs** — Input values and validation states
+- **UI state** — Open dialogs, expanded sections
+- **Navigation** — Current route
+- **Counters** — Timers, counters, IDs
+
+### ❌ Not Preserved
+
+- **Active commands** — In-flight HTTP requests
+- **Subscriptions** — WebSocket connections, intervals
+- **DOM references** — Cached DOM elements
+- **Closures** — Functions with captured variables
+
+## Example Workflow
+
+Imagine you're building a form:
+
+```typescript
+const Model = S.Struct({
+  email: StringField.Union,
+  password: StringField.Union,
+  rememberMe: S.Boolean
+})
+```
+
+**Without HMR:**
+1. Fill out the form
+2. Edit the validation logic
+3. Refresh the page
+4. Fill out the form again to test
+5. Repeat...
+
+**With HMR:**
+1. Fill out the form once
+2. Edit the validation logic
+3. See instant feedback
+4. Keep iterating without losing form state
+
+## Development Tips
+
+### Structure for HMR
+
+Organize code so view and update logic can be changed independently:
+
+```typescript
+// main.ts
+import { init } from './init'
+import { update } from './update'
+import { view } from './view'
+
+const element = Runtime.makeElement({
+  Model,
+  init,
+  update,
+  view,
+  container: document.getElementById('root')!
+})
+
+Runtime.run(element)
+```
+
+Now you can edit `view.ts` or `update.ts` and see changes instantly while preserving state.
+
+### Avoid Serialization Issues
+
+Keep your model serializable. Avoid:
+
+```typescript
+// ❌ Bad - functions don't serialize
+const Model = S.Struct({
+  onClick: S.Unknown  // Function
+})
+
+// ❌ Bad - DOM nodes don't serialize
+const Model = S.Struct({
+  inputElement: S.Unknown  // HTMLElement
+})
+
+// ✅ Good - primitives and data structures
+const Model = S.Struct({
+  userId: S.Number,
+  users: S.Array(UserSchema),
+  selection: S.Option(S.String)
+})
+```
+
+### Reset State When Needed
+
+During development, you may want to reset state:
+
+```typescript
+// Force a full page reload
+if (import.meta.hot) {
+  import.meta.hot.invalidate()
+}
+```
+
+Or use your browser's refresh button.
+
+## Testing HMR
+
+Verify HMR is working:
+
+1. Start your dev server: `npm run dev`
+2. Interact with your app (click buttons, fill forms)
+3. Edit a view function or CSS class
+4. Save the file
+5. Verify the change appears instantly without losing state
+
+## Debugging HMR
+
+### HMR Not Working?
+
+**Check the plugin is installed:**
+
+```typescript
+// vite.config.ts
+import { foldkit } from 'vite-plugin-foldkit'
+
+export default defineConfig({
+  plugins: [foldkit()]  // ← Plugin must be here
+})
+```
+
+**Check Runtime.run() is called:**
+
+```typescript
+const element = Runtime.makeElement({ /* ... */ })
+Runtime.run(element)  // ← Must call this
+```
+
+**Check the console:**
+
+Look for HMR-related messages in the browser console.
+
+### State Not Preserving?
+
+**Check for non-serializable values:**
+
+Ensure your model contains only data (no functions, DOM nodes, or class instances).
+
+**Check for circular references:**
+
+```typescript
+// ❌ Bad - circular reference
+const Model = S.Struct({
+  parent: S.Unknown,  // References child
+  child: S.Unknown    // References parent
+})
+
+// ✅ Good - use IDs instead
+const Model = S.Struct({
+  parentId: S.Option(S.Number),
+  childIds: S.Array(S.Number)
+})
+```
+
+## Production Builds
+
+HMR only runs in development. Production builds automatically exclude HMR code:
+
+```bash
+npm run build
+```
+
+The resulting bundle has no HMR overhead.
+
+## Advanced: Custom HMR
+
+For advanced use cases, you can access Vite's HMR API:
+
+```typescript
+if (import.meta.hot) {
+  // Accept HMR updates for this module
+  import.meta.hot.accept()
+  
+  // Handle custom HMR logic
+  import.meta.hot.on('custom:event', data => {
+    console.log('Custom HMR event', data)
+  })
+  
+  // Dispose callback for cleanup
+  import.meta.hot.dispose(() => {
+    console.log('Module is being replaced')
+  })
+}
+```
+
+## How It Compares
+
+### Traditional Hot Reload
+
+- Reloads the entire page
+- Loses all state
+- Requires re-entering data
+- Slower feedback loop
+
+### Foldkit HMR
+
+- Updates code instantly
+- Preserves model state
+- No data re-entry needed
+- Immediate feedback
+
+## Technical Details
+
+### State Serialization
+
+Foldkit serializes your model using structured cloning:
+
+```typescript
+const preserveModel = (model: unknown): void => {
+  if (import.meta.hot) {
+    import.meta.hot.send('foldkit:preserve-model', model)
+  }
+}
+```
+
+On reload, the model is restored:
+
+```typescript
+if (import.meta.hot) {
+  import.meta.hot.on('foldkit:restore-model', model => {
+    // Initialize with preserved model
+  })
+}
+```
+
+### Plugin Communication
+
+The Vite plugin acts as a state storage server:
+
+```typescript
+// vite-plugin-foldkit/src/index.ts
+export const foldkit = (): Plugin => ({
+  name: 'foldkit-hmr',
+  apply: 'serve',
+  configureServer(server) {
+    server.ws.on('foldkit:preserve-model', model => {
+      preservedModel = model  // Store in memory
+    })
+    
+    server.ws.on('foldkit:request-model', () => {
+      server.ws.send('foldkit:restore-model', preservedModel)
+    })
+  }
+})
+```
+
+This keeps state in the Vite dev server between reloads.
+
+## Best Practices
+
+### 1. Keep Models Serializable
+
+Only use JSON-serializable types in your model:
+
+```typescript
+// ✅ Good
+const Model = S.Struct({
+  count: S.Number,
+  items: S.Array(S.String),
+  user: S.Option(UserSchema)
+})
+```
+
+### 2. Use Subscriptions for Persistent Connections
+
+For WebSockets or intervals, use [subscriptions](/concepts/subscriptions) that automatically reconnect:
+
+```typescript
+const subscriptions = (model: Model): ReadonlyArray<Subscription<Message>> => [
+  webSocketSubscription(model.chatUrl)
+]
+```
+
+### 3. Test Without HMR
+
+Occasionally test with a full page reload to ensure your init logic works correctly:
+
+```bash
+# Disable HMR temporarily
+VITE_HMR=false npm run dev
+```
+
+### 4. Document Non-Serializable State
+
+If you must store non-serializable values, document why:
+
+```typescript
+const Model = S.Struct({
+  // This field won't survive HMR - that's OK because
+  // the canvas is recreated in the view function
+  canvasContext: S.Unknown
+})
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Routing" icon="route" href="/guides/routing">
+    Learn about Foldkit's type-safe routing system
+  </Card>
+  <Card title="Subscriptions" icon="broadcast-tower" href="/concepts/subscriptions">
+    Handle long-running effects with subscriptions
+  </Card>
+</CardGroup>

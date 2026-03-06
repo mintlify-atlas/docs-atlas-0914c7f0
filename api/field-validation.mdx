@@ -1,0 +1,428 @@
+---
+title: Field Validation
+description: Form field validation utilities with tagged field states and validation functions
+---
+
+The field validation module provides utilities for managing form field state and validation rules in Foldkit applications.
+
+## Overview
+
+Field validation in Foldkit uses a tagged union to represent field states (`NotValidated`, `Validating`, `Valid`, `Invalid`) and provides composable validation functions for common validation rules.
+
+## makeField
+
+Creates a tagged union of field states for a given value schema.
+
+```typescript
+import { Schema as S } from 'effect'
+import { makeField } from 'foldkit/fieldValidation'
+
+const EmailField = makeField(S.String)
+```
+
+### Returns
+
+An object containing:
+
+- `NotValidated` - Schema for field that hasn't been validated yet
+- `Validating` - Schema for field currently being validated
+- `Valid` - Schema for field with valid value
+- `Invalid` - Schema for field with validation errors
+- `Union` - Union schema of all field states
+- `validate(validations)` - Function that returns first validation error
+- `validateAll(validations)` - Function that returns all validation errors
+
+### Example
+
+```typescript
+const EmailField = makeField(S.String)
+
+// Create field states
+const notValidated = EmailField.NotValidated({ value: '' })
+const valid = EmailField.Valid({ value: 'user@example.com' })
+const invalid = EmailField.Invalid({ 
+  value: 'bad', 
+  errors: ['Invalid email address'] 
+})
+
+// Use in model
+const Model = S.Struct({
+  email: EmailField.Union,
+})
+
+// Validate field
+const validate = EmailField.validate([required(), email()])
+const result = validate('user@example.com') // Valid({ value: ... })
+```
+
+## String Validators
+
+### required
+
+Checks if a string is non-empty.
+
+<ParamField path="message" type="ValidationMessage<string>" default="'Required'">
+  Custom error message
+</ParamField>
+
+```typescript
+import { required } from 'foldkit/fieldValidation'
+
+const validation = required() // Uses default message
+const custom = required('Email is required')
+```
+
+### minLength
+
+Checks if a string meets a minimum length.
+
+<ParamField path="min" type="number" required>
+  Minimum number of characters
+</ParamField>
+
+<ParamField path="message" type="ValidationMessage<string>">
+  Custom error message (default: "Must be at least {min} characters")
+</ParamField>
+
+```typescript
+import { minLength } from 'foldkit/fieldValidation'
+
+const validation = minLength(3)
+const custom = minLength(8, 'Password must be at least 8 characters')
+```
+
+### maxLength
+
+Checks if a string does not exceed a maximum length.
+
+<ParamField path="max" type="number" required>
+  Maximum number of characters
+</ParamField>
+
+<ParamField path="message" type="ValidationMessage<string>">
+  Custom error message (default: "Must be at most {max} characters")
+</ParamField>
+
+```typescript
+import { maxLength } from 'foldkit/fieldValidation'
+
+const validation = maxLength(100)
+const custom = maxLength(50, 'Bio must be under 50 characters')
+```
+
+### pattern
+
+Checks if a string matches a regular expression.
+
+<ParamField path="regex" type="RegExp" required>
+  Regular expression to match against
+</ParamField>
+
+<ParamField path="message" type="ValidationMessage<string>" default="'Invalid format'">
+  Custom error message
+</ParamField>
+
+```typescript
+import { pattern } from 'foldkit/fieldValidation'
+
+const hexColor = pattern(/^#[0-9a-f]{6}$/i, 'Must be a valid hex color')
+const phoneNumber = pattern(/^\d{3}-\d{3}-\d{4}$/, 'Format: XXX-XXX-XXXX')
+```
+
+### email
+
+Checks if a string is a valid email format.
+
+<ParamField path="message" type="ValidationMessage<string>" default="'Invalid email address'">
+  Custom error message
+</ParamField>
+
+```typescript
+import { email } from 'foldkit/fieldValidation'
+
+const validation = email()
+const custom = email('Please enter a valid email')
+```
+
+### url
+
+Checks if a string is a valid URL format (http or https).
+
+<ParamField path="message" type="ValidationMessage<string>" default="'Invalid URL'">
+  Custom error message
+</ParamField>
+
+```typescript
+import { url } from 'foldkit/fieldValidation'
+
+const validation = url()
+const custom = url('Please enter a valid website URL')
+```
+
+### startsWith
+
+Checks if a string begins with a specified prefix.
+
+<ParamField path="prefix" type="string" required>
+  Required prefix
+</ParamField>
+
+<ParamField path="message" type="ValidationMessage<string>">
+  Custom error message (default: "Must start with {prefix}")
+</ParamField>
+
+```typescript
+import { startsWith } from 'foldkit/fieldValidation'
+
+const validation = startsWith('https://')
+const custom = startsWith('$', 'Price must start with $')
+```
+
+### endsWith
+
+Checks if a string ends with a specified suffix.
+
+<ParamField path="suffix" type="string" required>
+  Required suffix
+</ParamField>
+
+<ParamField path="message" type="ValidationMessage<string>">
+  Custom error message (default: "Must end with {suffix}")
+</ParamField>
+
+```typescript
+import { endsWith } from 'foldkit/fieldValidation'
+
+const validation = endsWith('.com')
+const custom = endsWith('@company.com', 'Must be a company email')
+```
+
+### includes
+
+Checks if a string contains a specified substring.
+
+<ParamField path="substring" type="string" required>
+  Required substring
+</ParamField>
+
+<ParamField path="message" type="ValidationMessage<string>">
+  Custom error message (default: "Must contain {substring}")
+</ParamField>
+
+```typescript
+import { includes } from 'foldkit/fieldValidation'
+
+const validation = includes('@')
+const custom = includes('admin', 'Username must contain "admin"')
+```
+
+### equals
+
+Checks if a string exactly matches an expected value.
+
+<ParamField path="expected" type="string" required>
+  Expected string value
+</ParamField>
+
+<ParamField path="message" type="ValidationMessage<string>">
+  Custom error message (default: "Must match {expected}")
+</ParamField>
+
+```typescript
+import { equals } from 'foldkit/fieldValidation'
+
+const validation = equals('DELETE')
+const custom = equals('I AGREE', 'Type "I AGREE" to confirm')
+```
+
+## Number Validators
+
+### min
+
+Checks if a number is greater than or equal to a minimum value.
+
+<ParamField path="num" type="number" required>
+  Minimum value (inclusive)
+</ParamField>
+
+<ParamField path="message" type="ValidationMessage<number>">
+  Custom error message (default: "Must be at least {num}")
+</ParamField>
+
+```typescript
+import { min } from 'foldkit/fieldValidation'
+
+const validation = min(0)
+const custom = min(18, 'Must be 18 or older')
+```
+
+### max
+
+Checks if a number is less than or equal to a maximum value.
+
+<ParamField path="num" type="number" required>
+  Maximum value (inclusive)
+</ParamField>
+
+<ParamField path="message" type="ValidationMessage<number>">
+  Custom error message (default: "Must be at most {num}")
+</ParamField>
+
+```typescript
+import { max } from 'foldkit/fieldValidation'
+
+const validation = max(100)
+const custom = max(10, 'Cannot exceed 10 items')
+```
+
+### between
+
+Checks if a number falls within a specified inclusive range.
+
+<ParamField path="min" type="number" required>
+  Minimum value (inclusive)
+</ParamField>
+
+<ParamField path="max" type="number" required>
+  Maximum value (inclusive)
+</ParamField>
+
+<ParamField path="message" type="ValidationMessage<number>">
+  Custom error message (default: "Must be between {min} and {max}")
+</ParamField>
+
+```typescript
+import { between } from 'foldkit/fieldValidation'
+
+const validation = between(1, 100)
+const custom = between(0, 5, 'Rating must be 0-5 stars')
+```
+
+### positive
+
+Checks if a number is greater than zero.
+
+<ParamField path="message" type="ValidationMessage<number>" default="'Must be positive'">
+  Custom error message
+</ParamField>
+
+```typescript
+import { positive } from 'foldkit/fieldValidation'
+
+const validation = positive()
+const custom = positive('Quantity must be positive')
+```
+
+### nonNegative
+
+Checks if a number is zero or greater.
+
+<ParamField path="message" type="ValidationMessage<number>" default="'Must be non-negative'">
+  Custom error message
+</ParamField>
+
+```typescript
+import { nonNegative } from 'foldkit/fieldValidation'
+
+const validation = nonNegative()
+const custom = nonNegative('Score cannot be negative')
+```
+
+### integer
+
+Checks if a number is a whole number (integer).
+
+<ParamField path="message" type="ValidationMessage<number>" default="'Must be a whole number'">
+  Custom error message
+</ParamField>
+
+```typescript
+import { integer } from 'foldkit/fieldValidation'
+
+const validation = integer()
+const custom = integer('Must be a whole number of items')
+```
+
+## Generic Validators
+
+### oneOf
+
+Checks if a string is one of a specified set of allowed values.
+
+<ParamField path="values" type="ReadonlyArray<string>" required>
+  Array of allowed values
+</ParamField>
+
+<ParamField path="message" type="ValidationMessage<string>">
+  Custom error message (default: "Must be one of: {values}")
+</ParamField>
+
+```typescript
+import { oneOf } from 'foldkit/fieldValidation'
+
+const validation = oneOf(['red', 'green', 'blue'])
+const custom = oneOf(['S', 'M', 'L', 'XL'], 'Select a valid size')
+```
+
+## Types
+
+### ValidationMessage
+
+An error message for a validation rule — either a static string or a function that receives the invalid value.
+
+```typescript
+type ValidationMessage<T> = string | ((value: T) => string)
+```
+
+### Validation
+
+A tuple of a predicate function and error message used for field validation.
+
+```typescript
+type Validation<T> = [Predicate.Predicate<T>, ValidationMessage<T>]
+```
+
+## Complete Example
+
+```typescript
+import { Schema as S } from 'effect'
+import { 
+  makeField, 
+  required, 
+  email, 
+  minLength,
+  type Validation 
+} from 'foldkit/fieldValidation'
+
+// Create field schemas
+const EmailField = makeField(S.String)
+const PasswordField = makeField(S.String)
+
+// Define validation rules
+const emailValidations: ReadonlyArray<Validation<string>> = [
+  required('Email is required'),
+  email('Please enter a valid email'),
+]
+
+const passwordValidations: ReadonlyArray<Validation<string>> = [
+  required('Password is required'),
+  minLength(8, 'Password must be at least 8 characters'),
+]
+
+// Create model
+const Model = S.Struct({
+  email: EmailField.Union,
+  password: PasswordField.Union,
+})
+
+// Validate fields
+const validateEmail = EmailField.validate(emailValidations)
+const validatePassword = PasswordField.validateAll(passwordValidations)
+
+// Use in update function
+const emailResult = validateEmail('user@example.com')
+// Valid({ value: 'user@example.com' })
+
+const passwordResult = validatePassword('short')
+// Invalid({ value: 'short', errors: ['Password must be at least 8 characters'] })
+```

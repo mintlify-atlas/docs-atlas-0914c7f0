@@ -1,0 +1,289 @@
+---
+title: Installation
+description: Set up your Foldkit development environment
+---
+
+# Installation
+
+The fastest way to start a new Foldkit project is with `create-foldkit-app`. It scaffolds a complete setup with Tailwind, TypeScript, ESLint, Prettier, and the Vite plugin for state-preserving HMR.
+
+## Quick Start
+
+Run the wizard to create a new project interactively:
+
+```bash
+npx create-foldkit-app@latest --wizard
+```
+
+The wizard will prompt you for:
+
+- **Project name** — The directory name for your new project
+- **Starting example** — Choose from 11 examples to start from
+- **Package manager** — pnpm, npm, or yarn
+
+<Note>
+You can also pass all options as command-line flags to skip the wizard.
+</Note>
+
+## Command-Line Options
+
+Create a project with specific options:
+
+```bash
+npx create-foldkit-app@latest \
+  --name my-app \
+  --example counter \
+  --package-manager pnpm
+```
+
+### Available Options
+
+<ParamField path="--name" type="string" required>
+  The name of your project. This will be the directory name and package name.
+
+  **Restrictions:**
+  - Cannot contain path separators (`/` or `\`)
+  - Cannot contain spaces
+  - Cannot contain special characters: `< > : " | ? *`
+  - Cannot start with `.` or `-`
+</ParamField>
+
+<ParamField path="--example" type="string" required>
+  The starting example for your project. Choose one that's similar to what you're building.
+
+  **Available examples:**
+  - `counter` — Simple increment/decrement with reset
+  - `stopwatch` — Timer with start/stop/reset functionality
+  - `weather` — HTTP requests with async state handling
+  - `todo` — CRUD operations with localStorage persistence
+  - `form` — Form validation with async email checking
+  - `snake` — Classic game built with subscriptions
+  - `routing` — URL routing with parser combinators and route parameters
+  - `query-sync` — URL-driven filtering, sorting, and search with query parameters
+  - `shopping-cart` — Complex state management with nested models and routing
+  - `websocket-chat` — Managed resources with WebSocket integration
+  - `auth` — Authentication with Model-as-Union pattern and protected routes
+</ParamField>
+
+<ParamField path="--package-manager" type="string" required>
+  The package manager to use for installing dependencies.
+
+  **Options:** `pnpm` | `npm` | `yarn`
+
+  <Note>
+  The package manager must be installed on your system. `create-foldkit-app` will verify it's available before proceeding.
+  </Note>
+</ParamField>
+
+## What Gets Created
+
+When you run `create-foldkit-app`, you get a complete, production-ready setup:
+
+```bash
+my-app/
+├── src/
+│   ├── main.ts           # Your Foldkit application
+│   └── vite-env.d.ts
+├── index.html
+├── package.json
+├── tsconfig.json         # TypeScript configuration
+├── vite.config.ts        # Vite + Foldkit HMR plugin
+├── tailwind.config.js    # Tailwind CSS configuration
+├── postcss.config.js
+├── .prettierrc
+└── eslint.config.js
+```
+
+### Included Dependencies
+
+<CodeGroup>
+```json package.json (dependencies)
+{
+  "dependencies": {
+    "@effect/platform-browser": "^0.74.0",
+    "effect": "^3.18.2",
+    "foldkit": "^0.26.0"
+  }
+}
+```
+
+```json package.json (devDependencies)
+{
+  "devDependencies": {
+    "@eslint/js": "^10.0.2",
+    "@types/node": "^22.13.4",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^9.18.0",
+    "postcss": "^8.4.49",
+    "prettier": "^3.4.2",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.20.0",
+    "vite": "^6.0.11",
+    "vite-plugin-foldkit": "^0.9.0"
+  }
+}
+```
+</CodeGroup>
+
+### Development Scripts
+
+The generated `package.json` includes these scripts:
+
+```json
+{
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier -w .",
+    "lint": "eslint ."
+  }
+}
+```
+
+## Starting Your Project
+
+Once your project is created:
+
+<Steps>
+  <Step title="Navigate to your project">
+    ```bash
+    cd my-app
+    ```
+  </Step>
+
+  <Step title="Start the development server">
+    <CodeGroup>
+    ```bash pnpm
+    pnpm dev
+    ```
+
+    ```bash npm
+    npm run dev
+    ```
+
+    ```bash yarn
+    yarn dev
+    ```
+    </CodeGroup>
+
+    Your application will be available at `http://localhost:5173`.
+  </Step>
+
+  <Step title="Edit your code">
+    Open `src/main.ts` in your editor. Thanks to the Foldkit Vite plugin, your changes will hot-reload while preserving application state.
+  </Step>
+</Steps>
+
+## State-Preserving HMR
+
+The included `vite-plugin-foldkit` provides hot module replacement that preserves your application state across code changes:
+
+```typescript vite.config.ts
+import foldkit from 'vite-plugin-foldkit'
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  plugins: [foldkit()],
+})
+```
+
+When you edit your `view` function, the UI updates instantly without resetting your model. This dramatically speeds up development—no more clicking through your app to get back to the state you were testing.
+
+<Note>
+Changes to the `Model` schema or `update` function will trigger a full reload to ensure type safety.
+</Note>
+
+## Requirements
+
+- **Node.js** — Version 18.0.0 or higher
+- **Package Manager** — pnpm (recommended), npm, or yarn
+
+## Manual Installation
+
+If you prefer to set up a project manually instead of using `create-foldkit-app`:
+
+<Steps>
+  <Step title="Install Foldkit and dependencies">
+    <CodeGroup>
+    ```bash pnpm
+    pnpm add foldkit effect @effect/platform-browser
+    ```
+
+    ```bash npm
+    npm install foldkit effect @effect/platform-browser
+    ```
+
+    ```bash yarn
+    yarn add foldkit effect @effect/platform-browser
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Install development dependencies">
+    <CodeGroup>
+    ```bash pnpm
+    pnpm add -D vite vite-plugin-foldkit typescript
+    ```
+
+    ```bash npm
+    npm install -D vite vite-plugin-foldkit typescript
+    ```
+
+    ```bash yarn
+    yarn add -D vite vite-plugin-foldkit typescript
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Configure Vite">
+    Create a `vite.config.ts` file:
+
+    ```typescript vite.config.ts
+    import foldkit from 'vite-plugin-foldkit'
+    import { defineConfig } from 'vite'
+
+    export default defineConfig({
+      plugins: [foldkit()],
+    })
+    ```
+  </Step>
+
+  <Step title="Configure TypeScript">
+    Create a `tsconfig.json` file:
+
+    ```json tsconfig.json
+    {
+      "compilerOptions": {
+        "target": "ES2022",
+        "module": "ESNext",
+        "lib": ["ES2022", "DOM", "DOM.Iterable"],
+        "moduleResolution": "bundler",
+        "resolveJsonModule": true,
+        "strict": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true
+      },
+      "include": ["src"]
+    }
+    ```
+  </Step>
+
+  <Step title="Create your application">
+    See the [Quickstart guide](/quickstart) for a complete example.
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first Foldkit application
+  </Card>
+
+  <Card title="Examples" icon="code" href="https://github.com/devinjameson/foldkit/tree/main/examples">
+    Explore example applications on GitHub
+  </Card>
+</CardGroup>

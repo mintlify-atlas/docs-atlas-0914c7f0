@@ -1,0 +1,274 @@
+---
+title: Todo
+description: A full-featured todo application with local storage persistence
+---
+
+The Todo example demonstrates how to build a complete CRUD application with local storage persistence, filtering, and editing functionality.
+
+## What You'll Learn
+
+- Local storage integration with `@effect/platform`
+- CRUD operations (Create, Read, Update, Delete)
+- Filtering and searching data
+- Inline editing patterns
+- Loading persisted state on startup
+- Working with unique IDs and timestamps
+
+## Live Demo
+
+<Card title="Todo Demo" icon="play" href="https://foldkit.dev/examples/todo">
+  Click to see the live todo example
+</Card>
+
+## Key Features
+
+- ✅ Add, edit, and delete todos
+- 🔄 Toggle completion status
+- 🔍 Filter by All/Active/Completed
+- 💾 Automatic local storage persistence
+- ✏️ Inline editing with save/cancel
+- 🧹 Bulk operations (toggle all, clear completed)
+
+## Model Structure
+
+```typescript
+const Todo = S.Struct({
+  id: S.String,
+  text: S.String,
+  completed: S.Boolean,
+  createdAt: S.Number,
+})
+
+const Filter = S.Literal('All', 'Active', 'Completed')
+
+const NotEditing = ts('NotEditing')
+const Editing = ts('Editing', {
+  id: S.String,
+  text: S.String,
+})
+
+const Model = S.Struct({
+  todos: S.Array(Todo),
+  newTodoText: S.String,
+  filter: Filter,
+  editing: S.Union(NotEditing, Editing),
+})
+```
+
+The model tracks:
+- The list of todos
+- Current input text for new todos
+- Active filter
+- Editing state (either not editing, or editing a specific todo)
+
+## Local Storage Persistence
+
+### Saving Todos
+
+Whenever todos change, they're automatically saved:
+
+```typescript
+const saveTodos = (todos: Todos): Command<typeof SavedTodos> =>
+  Effect.gen(function* () {
+    const store = yield* KeyValueStore.KeyValueStore
+    yield* store.set(TODOS_STORAGE_KEY, S.encodeSync(S.parseJson(Todos))(todos))
+    return SavedTodos({ todos })
+  }).pipe(
+    Effect.catchAll(() => Effect.succeed(SavedTodos({ todos }))),
+    Effect.provide(BrowserKeyValueStore.layerLocalStorage),
+  )
+```
+
+### Loading Todos
+
+On startup, todos are loaded from local storage:
+
+```typescript
+const flags: Effect.Effect<Flags> = Effect.gen(function* () {
+  const store = yield* KeyValueStore.KeyValueStore
+  const maybeTodosJson = yield* store.get(TODOS_STORAGE_KEY)
+  const todosJson = yield* maybeTodosJson
+
+  const decodeTodos = S.decode(S.parseJson(Todos))
+  const todos = yield* decodeTodos(todosJson)
+
+  return { todos: Option.some(todos) }
+}).pipe(
+  Effect.catchAll(() => Effect.succeed({ todos: Option.none() })),
+  Effect.provide(BrowserKeyValueStore.layerLocalStorage),
+)
+```
+
+The flags are passed to `init` to initialize with persisted data:
+
+```typescript
+const init: Runtime.ElementInit<Model, Message, Flags> = flags => [
+  {
+    todos: Option.getOrElse(flags.todos, () => []),
+    newTodoText: '',
+    filter: 'All',
+    editing: NotEditing(),
+  },
+  [],
+]
+```
+
+## CRUD Operations
+
+### Creating Todos
+
+```typescript
+AddedTodo: () => {
+  if (String.isEmpty(String.trim(model.newTodoText))) {
+    return [model, []]
+  }
+  return [model, [generateTodoData(String.trim(model.newTodoText))]]
+}
+
+GotNewTodoData: ({ id, timestamp, text }) => {
+  const newTodo: Todo = {
+    id,
+    text,
+    completed: false,
+    createdAt: timestamp,
+  }
+  const updatedTodos = [...model.todos, newTodo]
+  return [
+    evo(model, {
+      todos: () => updatedTodos,
+      newTodoText: () => '',
+    }),
+    [saveTodos(updatedTodos)],
+  ]
+}
+```
+
+### Updating Todos
+
+```typescript
+ToggledTodo: ({ id }) => {
+  const updatedTodos = Array.map(model.todos, todo =>
+    todo.id === id
+      ? evo(todo, { completed: completed => !completed })
+      : todo,
+  )
+  return [
+    evo(model, {
+      todos: () => updatedTodos,
+    }),
+    [saveTodos(updatedTodos)],
+  ]
+}
+```
+
+### Deleting Todos
+
+```typescript
+DeletedTodo: ({ id }) => {
+  const updatedTodos = Array.filter(model.todos, todo => todo.id !== id)
+  return [
+    evo(model, {
+      todos: () => updatedTodos,
+    }),
+    [saveTodos(updatedTodos)],
+  ]
+}
+```
+
+## Inline Editing
+
+The editing state is a discriminated union:
+
+```typescript
+StartedEditing: ({ id }) => {
+  const todo = Array.findFirst(model.todos, t => t.id === id)
+  return [
+    evo(model, {
+      editing: () =>
+        Editing({
+          id,
+          text: Option.match(todo, {
+            onNone: () => '',
+            onSome: t => t.text,
+          }),
+        }),
+    }),
+    [],
+  ]
+}
+
+SavedEdit: () =>
+  M.value(model.editing).pipe(
+    M.tagsExhaustive({
+      NotEditing: () => [model, []],
+      Editing: ({ id, text }) => {
+        if (String.isEmpty(String.trim(text))) {
+          return [
+            evo(model, {
+              editing: () => NotEditing(),
+            }),
+            [],
+          ]
+        }
+        const updatedTodos = Array.map(model.todos, todo =>
+          todo.id === id
+            ? evo(todo, { text: () => String.trim(text) })
+            : todo,
+        )
+        return [
+          evo(model, {
+            todos: () => updatedTodos,
+            editing: () => NotEditing(),
+          }),
+          [saveTodos(updatedTodos)],
+        ]
+      },
+    }),
+  )
+```
+
+The view shows different UI based on editing state:
+
+```typescript
+const todoItemView =
+  (model: Model) =>
+  (todo: Todo): Html =>
+    M.value(model.editing).pipe(
+      M.tagsExhaustive({
+        NotEditing: () => nonEditingTodoView(todo),
+        Editing: ({ id, text }) =>
+          id === todo.id
+            ? editingTodoView(todo, text)
+            : nonEditingTodoView(todo),
+      }),
+    )
+```
+
+## Filtering
+
+```typescript
+const filterTodos = (todos: Todos, filter: Filter): Todos =>
+  M.value(filter).pipe(
+    M.when('All', () => todos),
+    M.when('Active', () => Array.filter(todos, todo => !todo.completed)),
+    M.when('Completed', () => Array.filter(todos, todo => todo.completed)),
+    M.exhaustive,
+  )
+```
+
+## Complete Source Code
+
+<Card title="todo/src/main.ts" icon="github" href="https://github.com/foldkit/foldkit/tree/main/examples/todo/src/main.ts">
+  View the complete source code on GitHub (619 lines)
+</Card>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Form" icon="input" href="/examples/form">
+    Learn advanced form validation techniques
+  </Card>
+  <Card title="Shopping Cart" icon="shopping-cart" href="/examples/shopping-cart">
+    Build a multi-page app with routing
+  </Card>
+</CardGroup>

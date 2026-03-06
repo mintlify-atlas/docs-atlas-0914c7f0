@@ -1,0 +1,374 @@
+---
+title: View
+description: Render your model as type-safe, declarative HTML with event handlers
+---
+
+The view function transforms your model into HTML. Views in Foldkit are pure functions that return an `Html` Effect, which the runtime renders to the DOM using a virtual DOM diffing algorithm.
+
+## Basic View
+
+Create HTML elements using the `html` helper:
+
+```typescript packages/examples/counter/src/main.ts
+import { Html, html } from 'foldkit/html'
+
+const { div, button, Class, OnClick } = html<Message>()
+
+const view = (model: Model): Html =>
+  div(
+    [
+      Class(
+        'min-h-screen bg-white flex flex-col items-center justify-center gap-6',
+      ),
+    ],
+    [
+      div([Class('text-6xl font-bold text-gray-800')], [model.count.toString()]),
+      div(
+        [Class('flex flex-wrap justify-center gap-4')],
+        [
+          button([OnClick(ClickedDecrement()), Class(buttonStyle)], ['-']),
+          button([OnClick(ClickedReset()), Class(buttonStyle)], ['Reset']),
+          button([OnClick(ClickedIncrement()), Class(buttonStyle)], ['+']),
+        ],
+      ),
+    ],
+  )
+```
+
+Every element takes two arrays:
+1. **Attributes** — Styling, event handlers, ARIA attributes
+2. **Children** — Nested elements or text nodes
+
+## Element Signature
+
+All HTML elements follow the same pattern:
+
+```typescript
+type ElementFunction = (
+  attributes: ReadonlyArray<Attribute<Message>>,
+  children: ReadonlyArray<Html | string>,
+) => Html
+```
+
+Void elements (like `input`, `img`, `br`) only take attributes:
+
+```typescript
+type VoidElementFunction = (
+  attributes: ReadonlyArray<Attribute<Message>>,
+) => Html
+```
+
+## Available Elements
+
+The `html<Message>()` helper returns all HTML, SVG, and MathML elements:
+
+```typescript
+const {
+  // Layout
+  div, span, section, article, header, footer, nav, main, aside,
+  
+  // Typography  
+  h1, h2, h3, h4, h5, h6, p, blockquote, pre, code,
+  
+  // Forms
+  form, input, textarea, select, option, button, label,
+  
+  // Lists
+  ul, ol, li, dl, dt, dd,
+  
+  // Tables
+  table, thead, tbody, tfoot, tr, th, td,
+  
+  // Media
+  img, video, audio, canvas, svg,
+  
+  // Attributes
+  Class, Id, Href, Src, Alt, Value, Placeholder,
+  
+  // Events
+  OnClick, OnInput, OnSubmit, OnChange, OnKeyDown,
+  
+  // ... and many more
+} = html<Message>()
+```
+
+## Attributes
+
+Attributes control element behavior and styling:
+
+```typescript
+input([
+  Type('email'),
+  Value(model.email),
+  Placeholder('Enter your email'),
+  Class('px-4 py-2 border rounded'),
+  Required(true),
+  Autofocus(true),
+  OnInput(value => UpdatedEmail({ value })),
+])
+```
+
+Common attributes:
+- **Class** — CSS classes (space-separated string)
+- **Id** — Element ID
+- **Style** — Inline styles as an object
+- **Href**, **Src**, **Alt** — Links and media
+- **Value**, **Checked**, **Selected** — Form state
+- **Disabled**, **Readonly**, **Required** — Form validation
+- **Aria*** — Accessibility attributes
+
+## Event Handlers
+
+Event handlers receive messages or functions that produce messages:
+
+### Simple Events
+
+Pass a message directly:
+
+```typescript
+button([OnClick(ClickedSubmit())], ['Submit'])
+```
+
+### Events with Data
+
+Pass a function that receives event data:
+
+```typescript
+input([OnInput(value => UpdatedInput({ value }))])
+
+button([
+  OnKeyDown((key, modifiers) => {
+    if (key === 'Enter' && modifiers.metaKey) {
+      return SubmittedForm()
+    }
+    return NoOp()
+  }),
+])
+```
+
+Available event handlers:
+
+<CodeGroup>
+
+```typescript Mouse Events
+OnClick(message)
+OnDblClick(message)
+OnMouseDown(message)
+OnMouseUp(message)
+OnMouseEnter(message)
+OnMouseLeave(message)
+OnMouseMove(message)
+```
+
+```typescript Keyboard Events  
+OnKeyDown((key, modifiers) => message)
+OnKeyUp((key, modifiers) => message)
+OnKeyPress((key, modifiers) => message)
+OnKeyDownPreventDefault((key, mods) => Option.Option<Message>)
+```
+
+```typescript Form Events
+OnInput(value => message)
+OnChange(value => message)
+OnSubmit(message)
+OnReset(message)
+```
+
+```typescript Pointer Events
+OnPointerDown((type, button, x, y, time) => Option.Option<Message>)
+OnPointerUp((x, y, type, time) => Option.Option<Message>)
+OnPointerMove((x, y, type) => Option.Option<Message>)
+OnPointerLeave(type => Option.Option<Message>)
+```
+
+</CodeGroup>
+
+## Conditional Rendering
+
+Use pattern matching for conditional views:
+
+```typescript packages/examples/todo/src/main.ts
+import { Array, Match as M } from 'effect'
+
+Array.match(filteredTodos, {
+  onEmpty: () =>
+    div(
+      [Class('text-center text-gray-500 py-8')],
+      [
+        M.value(model.filter).pipe(
+          M.when('All', () => 'No todos yet. Add one above!'),
+          M.when('Active', () => 'No active todos'),
+          M.when('Completed', () => 'No completed todos'),
+          M.exhaustive,
+        ),
+      ],
+    ),
+  onNonEmpty: todos =>
+    ul([Class('space-y-2 mb-6')], Array.map(todos, todoItemView(model))),
+})
+```
+
+For simple conditionals, use ternary:
+
+```typescript
+completedCount > 0
+  ? button([OnClick(ClearedCompleted())], ['Clear completed'])
+  : empty
+```
+
+## Rendering Lists
+
+Map over arrays to create elements:
+
+```typescript packages/examples/todo/src/main.ts
+import { Array } from 'effect'
+
+ul(
+  [Class('space-y-2')],
+  Array.map(model.todos, todo =>
+    li(
+      [Class('flex items-center gap-3')],
+      [
+        input([
+          Type('checkbox'),
+          Value(todo.completed ? 'on' : ''),
+          OnClick(ToggledTodo({ id: todo.id })),
+        ]),
+        span([Class('flex-1')], [todo.text]),
+        button([OnClick(DeletedTodo({ id: todo.id }))], ['Delete']),
+      ],
+    ),
+  ),
+)
+```
+
+<Note>
+Use `Array.map` from Effect instead of native `.map` in `pipe` chains for better composition.
+</Note>
+
+## Extracting View Helpers
+
+Break large views into functions:
+
+```typescript packages/examples/todo/src/main.ts
+const todoItemView =
+  (model: Model) =>
+  (todo: Todo): Html =>
+    M.value(model.editing).pipe(
+      M.tagsExhaustive({
+        NotEditing: () => nonEditingTodoView(todo),
+        Editing: ({ id, text }) =>
+          id === todo.id ? editingTodoView(todo, text) : nonEditingTodoView(todo),
+      }),
+    )
+
+const nonEditingTodoView = (todo: Todo): Html =>
+  li(
+    [Class('flex items-center gap-3 p-3')],
+    [
+      input([
+        Type('checkbox'),
+        Value(todo.completed ? 'on' : ''),
+        OnClick(ToggledTodo({ id: todo.id })),
+      ]),
+      span([Class('flex-1')], [todo.text]),
+      button([OnClick(DeletedTodo({ id: todo.id }))], ['×']),
+    ],
+  )
+
+const editingTodoView = (todo: Todo, text: string): Html =>
+  li(
+    [Class('flex items-center gap-3 p-3')],
+    [
+      input([
+        Type('text'),
+        Value(text),
+        OnInput(text => UpdatedEditingTodo({ text })),
+      ]),
+      button([OnClick(SavedEdit())], ['Save']),
+      button([OnClick(CancelledEdit())], ['Cancel']),
+    ],
+  )
+```
+
+View helpers keep the main view function focused and readable.
+
+## Keyed Elements
+
+Use `keyed` wrappers when rendering different layouts:
+
+```typescript
+import { html } from 'foldkit/html'
+
+const { keyed } = html<Message>()
+
+const view = (model: Model): Html =>
+  M.value(model.route).pipe(
+    M.tagsExhaustive({
+      Landing: () => keyed('div')('landing', [], [landingView()]),
+      Dashboard: () => keyed('div')('dashboard', [], [dashboardView(model)]),
+      Settings: () => keyed('div')('settings', [], [settingsView(model)]),
+    }),
+  )
+```
+
+Without keying, the virtual DOM will try to patch one layout into another, causing stale event handlers and broken state.
+
+## Nested Views
+
+Large applications compose views with message transformers:
+
+```typescript packages/examples/auth/src/page/loggedIn/view.ts
+import { Match as M } from 'effect'
+import { Html } from 'foldkit/html'
+
+const view = (
+  model: Model,
+  toMessage: (message: Message) => ParentMessage,
+): Html =>
+  M.value(model.route).pipe(
+    M.tagsExhaustive({
+      Dashboard: () => Dashboard.view(model.session),
+      Settings: () =>
+        Settings.view(model.session, message =>
+          toMessage(GotSettingsMessage({ message })),
+        ),
+    }),
+  )
+```
+
+The child view receives a callback that wraps its messages for the parent.
+
+## View Performance
+
+Foldkit warns when views take longer than 16ms:
+
+```
+[foldkit] Slow view: 23.4ms (budget: 16ms). 
+Consider moving computation to update or memoizing with createLazy.
+```
+
+To fix slow views:
+
+1. **Move computation to update** — Pre-calculate derived data
+2. **Use `createLazy`** — Memoize expensive view sections
+3. **Extract static content** — Move constant elements outside the view
+
+<Warning>
+Views must be pure:
+
+- **No side effects** — Don't mutate state, fetch data, or log
+- **No Date.now()** — Use the model's timestamp
+- **Deterministic** — Same model always produces same HTML
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Commands" icon="terminal" href="/concepts/commands">
+    Trigger side effects from update
+  </Card>
+  <Card title="Subscriptions" icon="arrows-rotate" href="/concepts/subscriptions">
+    Stream events based on model state
+  </Card>
+</CardGroup>

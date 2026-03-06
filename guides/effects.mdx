@@ -1,0 +1,456 @@
+---
+title: "Effects & Commands"
+description: "Learn how to handle side effects using commands in Foldkit"
+---
+
+## Overview
+
+Foldkit uses Effect-TS for managing side effects in a type-safe, composable way. Commands are Effect computations that produce messages, keeping your update function pure while enabling interactions with the outside world.
+
+## What is a Command?
+
+A `Command` is an Effect that produces a message:
+
+```typescript
+import { Effect } from 'effect'
+import type { Command } from 'foldkit/command'
+
+// A command that produces a Message
+type Command<T> = Effect.Effect<T, never, never>
+```
+
+Commands represent side effects like:
+- HTTP requests
+- Timers and delays
+- DOM manipulation
+- Random number generation
+- Local storage access
+- WebSocket messages
+
+## Creating Commands
+
+Commands are created in your update function and returned alongside the new model:
+
+```typescript
+import { Effect } from 'effect'
+import { m } from 'foldkit/message'
+
+const LoadedData = m('LoadedData', { data: S.String })
+
+const fetchData = (): Command<typeof LoadedData> =>
+  Effect.gen(function* () {
+    const response = yield* Effect.promise(() => fetch('/api/data'))
+    const data = yield* Effect.promise(() => response.text())
+    return LoadedData({ data })
+  })
+
+const update = (model: Model, message: Message) =>
+  M.value(message).pipe(
+    M.tagsExhaustive({
+      ClickedLoad: () => [
+        evo(model, { loading: () => true }),
+        [fetchData()]  // Return command
+      ],
+      
+      LoadedData: ({ data }) => [
+        evo(model, { loading: () => false, data: () => data }),
+        []  // No commands
+      ]
+    })
+  )
+```
+
+## Built-in Task Helpers
+
+Foldkit provides common side effects through the `Task` module.
+
+### DOM Manipulation
+
+```typescript
+import * as Task from 'foldkit/task'
+
+// Focus an element
+Task.focus('#username-input')
+
+// Click an element
+Task.clickElement('#submit-button')
+
+// Scroll element into view
+Task.scrollIntoView('#section-3')
+
+// Show/close modal dialogs
+Task.showModal('#confirm-dialog')
+Task.closeModal('#confirm-dialog')
+```
+
+### Timing
+
+```typescript
+import { Duration } from 'effect'
+
+// Delay execution
+Task.delay(Duration.seconds(2))
+
+// Wait for next animation frame
+Task.nextFrame
+
+// Wait for CSS transitions to complete
+Task.waitForTransitions('#animated-element')
+```
+
+### Random Values
+
+```typescript
+// Generate random integer
+Task.randomInt({ min: 1, max: 100 })
+```
+
+### Time
+
+```typescript
+// Get current time
+Task.getTime()  // Effect<number>
+
+// Get timezone
+Task.getTimeZone()  // Effect<string>
+
+// Get zoned time
+Task.getZonedTime()  // Effect<ZonedTime>
+```
+
+## Command Patterns
+
+### Simple HTTP Request
+
+```typescript
+const FetchedUser = m('FetchedUser', { 
+  user: S.Struct({ id: S.Number, name: S.String }) 
+})
+const FetchUserFailed = m('FetchUserFailed', { error: S.String })
+
+const fetchUser = (userId: number): Command<typeof FetchedUser | typeof FetchUserFailed> =>
+  Effect.gen(function* () {
+    const response = yield* Effect.tryPromise({
+      try: () => fetch(`/api/users/${userId}`),
+      catch: () => new Error('Network error')
+    })
+    
+    if (!response.ok) {
+      return FetchUserFailed({ error: 'User not found' })
+    }
+    
+    const user = yield* Effect.promise(() => response.json())
+    return FetchedUser({ user })
+  })
+```
+
+### With Error Handling
+
+```typescript
+const fetchUser = (userId: number): Command<typeof FetchedUser | typeof FetchUserFailed> =>
+  Effect.gen(function* () {
+    const response = yield* Effect.tryPromise({
+      try: () => fetch(`/api/users/${userId}`),
+      catch: () => new Error('Network error')
+    })
+    
+    if (!response.ok) {
+      return FetchUserFailed({ error: `HTTP ${response.status}` })
+    }
+    
+    const user = yield* Effect.tryPromise({
+      try: () => response.json(),
+      catch: () => new Error('Invalid JSON')
+    })
+    
+    return FetchedUser({ user })
+  }).pipe(
+    Effect.catchAll(error =>
+      Effect.succeed(FetchUserFailed({ error: error.message }))
+    )
+  )
+```
+
+<Tip>
+Always catch errors in commands and convert them to messages. This prevents runtime errors from crashing your application.
+</Tip>
+
+### Combining Commands
+
+Run multiple commands in parallel:
+
+```typescript
+import { Effect } from 'effect'
+
+const LoadedAll = m('LoadedAll', {
+  users: S.Array(UserSchema),
+  posts: S.Array(PostSchema)
+})
+
+const fetchAll = (): Command<typeof LoadedAll> =>
+  Effect.gen(function* () {
+    const [users, posts] = yield* Effect.all([
+      fetchUsers(),
+      fetchPosts()
+    ])
+    
+    return LoadedAll({ users, posts })
+  })
+```
+
+Run commands sequentially:
+
+```typescript
+const createAndFetchUser = (): Command<typeof FetchedUser> =>
+  Effect.gen(function* () {
+    const created = yield* createUser({ name: 'Alice' })
+    const user = yield* fetchUser(created.id)
+    return FetchedUser({ user })
+  })
+```
+
+### Debounced Search
+
+```typescript
+import { Duration } from 'effect'
+
+const SearchedUsers = m('SearchedUsers', { 
+  results: S.Array(UserSchema) 
+})
+
+const searchUsers = (query: string): Command<typeof SearchedUsers> =>
+  Effect.gen(function* () {
+    yield* Effect.sleep(Duration.millis(300))  // Debounce
+    
+    const response = yield* Effect.tryPromise({
+      try: () => fetch(`/api/users/search?q=${query}`),
+      catch: () => new Error('Search failed')
+    })
+    
+    const results = yield* Effect.promise(() => response.json())
+    return SearchedUsers({ results })
+  }).pipe(
+    Effect.catchAll(() => 
+      Effect.succeed(SearchedUsers({ results: [] }))
+    )
+  )
+```
+
+## Message-Producing Commands
+
+Commands must always produce a message. Use a `NoOp` message for commands that have no result:
+
+```typescript
+const NoOp = m('NoOp')
+
+const saveToLocalStorage = (key: string, value: string): Command<typeof NoOp> =>
+  Effect.gen(function* () {
+    yield* Effect.sync(() => localStorage.setItem(key, value))
+    return NoOp()
+  })
+```
+
+## Effect Services
+
+For complex side effects, create Effect services:
+
+```typescript
+import { Context, Effect, Layer } from 'effect'
+
+class ApiService extends Context.Tag('ApiService')<
+  ApiService,
+  {
+    readonly fetchUser: (id: number) => Effect.Effect<User, Error>
+    readonly createUser: (data: CreateUserData) => Effect.Effect<User, Error>
+  }
+>() {}
+
+const ApiServiceLive = Layer.succeed(
+  ApiService,
+  {
+    fetchUser: (id: number) =>
+      Effect.tryPromise({
+        try: () => fetch(`/api/users/${id}`).then(r => r.json()),
+        catch: () => new Error('Fetch failed')
+      }),
+    
+    createUser: (data: CreateUserData) =>
+      Effect.tryPromise({
+        try: () => 
+          fetch('/api/users', {
+            method: 'POST',
+            body: JSON.stringify(data)
+          }).then(r => r.json()),
+        catch: () => new Error('Create failed')
+      })
+  }
+)
+
+// Use in commands
+const fetchUser = (userId: number): Command<typeof FetchedUser> =>
+  Effect.gen(function* () {
+    const api = yield* ApiService
+    const user = yield* api.fetchUser(userId)
+    return FetchedUser({ user })
+  }).pipe(
+    Effect.provide(ApiServiceLive),
+    Effect.catchAll(error =>
+      Effect.succeed(FetchUserFailed({ error: error.message }))
+    )
+  )
+```
+
+## Testing Commands
+
+Commands are just Effect values, so they're easy to test:
+
+```typescript
+import { Effect } from 'effect'
+import { describe, it, expect } from 'vitest'
+
+describe('fetchUser command', () => {
+  it('returns FetchedUser on success', async () => {
+    const command = fetchUser(123)
+    const result = await Effect.runPromise(command)
+    
+    expect(result._tag).toBe('FetchedUser')
+    expect(result.user.id).toBe(123)
+  })
+  
+  it('returns FetchUserFailed on error', async () => {
+    // Mock fetch to fail
+    global.fetch = () => Promise.reject(new Error('Network error'))
+    
+    const command = fetchUser(123)
+    const result = await Effect.runPromise(command)
+    
+    expect(result._tag).toBe('FetchUserFailed')
+  })
+})
+```
+
+## Best Practices
+
+### Always Handle Errors
+
+```typescript
+// ❌ Bad - can crash
+const fetchData = () =>
+  Effect.gen(function* () {
+    const response = yield* Effect.promise(() => fetch('/api/data'))
+    const data = yield* Effect.promise(() => response.json())
+    return LoadedData({ data })
+  })
+
+// ✅ Good - errors become messages
+const fetchData = () =>
+  Effect.gen(function* () {
+    const response = yield* Effect.promise(() => fetch('/api/data'))
+    const data = yield* Effect.promise(() => response.json())
+    return LoadedData({ data })
+  }).pipe(
+    Effect.catchAll(error =>
+      Effect.succeed(LoadDataFailed({ error: error.message }))
+    )
+  )
+```
+
+### Type-Safe Message Returns
+
+Use union types to document all possible command results:
+
+```typescript
+const fetchUser = (
+  userId: number
+): Command<typeof FetchedUser | typeof FetchUserFailed> => {
+  // TypeScript ensures you return one of these messages
+}
+```
+
+### Keep Commands Pure
+
+Commands should be functions that return Effects, not Effects themselves:
+
+```typescript
+// ❌ Bad - command created immediately
+const command = Effect.sync(() => console.log('immediate'))
+
+// ✅ Good - command created when called
+const command = () => Effect.sync(() => console.log('deferred'))
+```
+
+### Batch Commands
+
+Return multiple commands from update:
+
+```typescript
+const update = (model: Model, message: Message) =>
+  M.value(message).pipe(
+    M.tagsExhaustive({
+      ClickedRefreshAll: () => [
+        evo(model, { loading: () => true }),
+        [
+          fetchUsers(),
+          fetchPosts(),
+          fetchComments()
+        ]
+      ]
+    })
+  )
+```
+
+Commands run concurrently and their messages are processed in order of completion.
+
+## Common Patterns
+
+### Polling
+
+```typescript
+import { Duration } from 'effect'
+
+const pollData = (): Command<typeof PolledData> =>
+  Effect.gen(function* () {
+    yield* Effect.sleep(Duration.seconds(5))
+    const data = yield* fetchData()
+    return PolledData({ data })
+  })
+
+const update = (model: Model, message: Message) =>
+  M.value(message).pipe(
+    M.tagsExhaustive({
+      PolledData: ({ data }) => [
+        evo(model, { data: () => data }),
+        [pollData()]  // Schedule next poll
+      ]
+    })
+  )
+```
+
+### Retry Logic
+
+```typescript
+import { Schedule } from 'effect'
+
+const fetchWithRetry = (): Command<typeof FetchedData> =>
+  Effect.gen(function* () {
+    const response = yield* Effect.promise(() => fetch('/api/data'))
+    const data = yield* Effect.promise(() => response.json())
+    return FetchedData({ data })
+  }).pipe(
+    Effect.retry(Schedule.exponential(Duration.seconds(1))),
+    Effect.catchAll(error =>
+      Effect.succeed(FetchDataFailed({ error: error.message }))
+    )
+  )
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="HMR" icon="fire" href="/guides/hmr">
+    Enable Hot Module Replacement for instant updates
+  </Card>
+  <Card title="Subscriptions" icon="broadcast-tower" href="/concepts/subscriptions">
+    Learn about long-running effects with subscriptions
+  </Card>
+</CardGroup>

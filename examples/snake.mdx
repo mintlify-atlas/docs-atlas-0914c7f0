@@ -1,0 +1,354 @@
+---
+title: Snake Game
+description: A classic Snake game demonstrating game loops, keyboard input, and collision detection
+---
+
+The Snake game example demonstrates how to build an interactive game with keyboard controls, game loops using subscriptions, and collision detection.
+
+## What You'll Learn
+
+- Keyboard event subscriptions
+- Game loop with variable speed
+- Grid-based game logic
+- Collision detection
+- Score tracking
+- Domain-driven game architecture
+
+## Live Demo
+
+<Card title="Snake Game Demo" icon="play" href="https://foldkit.dev/examples/snake">
+  Click to play the Snake game
+</Card>
+
+## Key Features
+
+- 🎮 Arrow keys or WASD controls
+- 🍎 Random apple spawning
+- 🐍 Growing snake on eating apples
+- 💀 Collision detection (walls & self)
+- 🎯 Score tracking
+- ⏸️ Pause/resume with spacebar
+- 🔄 Restart with R key
+- ⚡ Speed increases with score
+
+## Game Structure
+
+```
+snake/
+├── src/
+│   ├── main.ts
+│   ├── constants.ts
+│   └── domain/
+│       ├── snake.ts      # Snake movement & collision
+│       ├── apple.ts      # Apple positioning
+│       ├── position.ts   # Position utilities
+│       └── direction.ts  # Direction logic
+```
+
+## Model
+
+```typescript
+export const GameState = S.Literal(
+  'NotStarted',
+  'Playing',
+  'Paused',
+  'GameOver',
+)
+
+const Model = S.Struct({
+  snake: Snake.Snake,
+  apple: Position.Position,
+  direction: Direction.Direction,
+  nextDirection: Direction.Direction,
+  gameState: GameState,
+  points: S.Number,
+  highScore: S.Number,
+})
+```
+
+The model tracks:
+- Current snake segments
+- Apple position
+- Current and next direction (to prevent instant reversals)
+- Game state
+- Points and high score
+
+## Game Loop Subscription
+
+The game loop runs when the game is playing:
+
+```typescript
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message
+>({
+  gameClock: {
+    modelToDependencies: (model: Model) => ({
+      isPlaying: model.gameState === 'Playing',
+      interval: Math.max(
+        GAME_SPEED.MIN_INTERVAL,
+        GAME_SPEED.BASE_INTERVAL - model.points,
+      ),
+    }),
+    depsToStream: (deps: { isPlaying: boolean; interval: number }) =>
+      Stream.when(
+        Stream.tick(Duration.millis(deps.interval)).pipe(
+          Stream.map(() => Effect.succeed(TickedClock())),
+        ),
+        () => deps.isPlaying,
+      ),
+  },
+
+  keyboard: {
+    modelToDependencies: () => null,
+    depsToStream: () =>
+      Stream.fromEventListener<KeyboardEvent>(document, 'keydown').pipe(
+        Stream.map(keyboardEvent =>
+          Effect.sync(() => {
+            keyboardEvent.preventDefault()
+            return PressedKey({ key: keyboardEvent.key })
+          }),
+        ),
+      ),
+  },
+})
+```
+
+Key points:
+- Game speed increases as score increases
+- Keyboard events are always listened to (for pause/restart)
+- Game ticks only when playing
+
+## Keyboard Handling
+
+```typescript
+PressedKey: ({ key }) =>
+  M.value(key).pipe(
+    M.whenOr(
+      'ArrowUp',
+      'ArrowDown',
+      'ArrowLeft',
+      'ArrowRight',
+      'w',
+      'a',
+      's',
+      'd',
+      moveKey => {
+        const nextDirection = M.value(moveKey).pipe(
+          M.whenOr('ArrowUp', 'w', () => 'Up'),
+          M.whenOr('ArrowDown', 's', () => 'Down'),
+          M.whenOr('ArrowLeft', 'a', () => 'Left'),
+          M.whenOr('ArrowRight', 'd', () => 'Right'),
+          M.exhaustive,
+        )
+
+        if (model.gameState === 'Playing') {
+          return [
+            evo(model, {
+              nextDirection: () => nextDirection,
+            }),
+            [],
+          ]
+        } else {
+          return [model, []]
+        }
+      },
+    ),
+    M.when(' ', () => {
+      // Toggle pause
+      const nextGameState = M.value(model.gameState).pipe(
+        M.when('NotStarted', () => 'Playing'),
+        M.when('Playing', () => 'Paused'),
+        M.when('Paused', () => 'Playing'),
+        M.when('GameOver', () => 'GameOver'),
+        M.exhaustive,
+      )
+      return [evo(model, { gameState: () => nextGameState }), []]
+    }),
+    M.when('r', () => {
+      // Restart game
+      const nextSnake = Snake.create(GAME.INITIAL_POSITION)
+      return [
+        evo(model, {
+          snake: () => nextSnake,
+          direction: () => GAME.INITIAL_DIRECTION,
+          nextDirection: () => GAME.INITIAL_DIRECTION,
+          gameState: () => 'NotStarted',
+          points: () => 0,
+        }),
+        [requestApple(nextSnake)],
+      ]
+    }),
+    M.orElse(() => [model, []]),
+  )
+```
+
+## Game Tick Logic
+
+```typescript
+TickedClock: () => {
+  if (model.gameState !== 'Playing') {
+    return [model, []]
+  }
+
+  // Prevent instant 180° turns
+  const currentDirection = Direction.isOpposite(
+    model.direction,
+    model.nextDirection,
+  )
+    ? model.direction
+    : model.nextDirection
+
+  const newHead = Position.move(model.snake[0], currentDirection)
+  const willEatApple = Position.equivalence(newHead, model.apple)
+
+  const nextSnake = willEatApple
+    ? Snake.grow(model.snake, currentDirection)
+    : Snake.move(model.snake, currentDirection)
+
+  if (Snake.hasCollision(nextSnake)) {
+    return [
+      evo(model, {
+        gameState: () => 'GameOver',
+        highScore: highScore => Math.max(model.points, highScore),
+      }),
+      [],
+    ]
+  }
+
+  const commands = willEatApple ? [requestApple(nextSnake)] : []
+
+  return [
+    evo(model, {
+      snake: () => nextSnake,
+      direction: () => currentDirection,
+      points: points =>
+        willEatApple ? points + GAME.POINTS_PER_APPLE : points,
+    }),
+    commands,
+  ]
+}
+```
+
+## Domain Logic
+
+### Snake Movement
+
+```typescript
+// domain/snake.ts
+export const move = (snake: Snake, direction: Direction.Direction): Snake => {
+  const newHead = Position.move(snake[0], direction)
+  return [newHead, ...Array.take(snake, snake.length - 1)]
+}
+
+export const grow = (snake: Snake, direction: Direction.Direction): Snake => {
+  const newHead = Position.move(snake[0], direction)
+  return [newHead, ...snake]
+}
+
+export const hasCollision = (snake: Snake): boolean => {
+  const head = snake[0]
+  const tail = Array.tailNonEmpty(snake)
+
+  // Wall collision
+  if (
+    head.x < 0 ||
+    head.x >= GAME.GRID_SIZE ||
+    head.y < 0 ||
+    head.y >= GAME.GRID_SIZE
+  ) {
+    return true
+  }
+
+  // Self collision
+  return pipe(
+    tail,
+    Array.some(segment => Position.equivalence(head, segment)),
+  )
+}
+```
+
+### Apple Generation
+
+```typescript
+// domain/apple.ts
+export const generatePosition = (
+  snake: Snake.Snake,
+): Effect.Effect<Position.Position> =>
+  Effect.gen(function* () {
+    const x = yield* Random.nextIntBetween(0, GAME.GRID_SIZE)
+    const y = yield* Random.nextIntBetween(0, GAME.GRID_SIZE)
+    const position = { x, y }
+
+    // Ensure apple doesn't spawn on snake
+    const isOnSnake = pipe(
+      snake,
+      Array.some(segment => Position.equivalence(position, segment)),
+    )
+
+    if (isOnSnake) {
+      return yield* generatePosition(snake)
+    }
+
+    return position
+  })
+```
+
+## Rendering the Grid
+
+```typescript
+const gridView = (model: Model): Html =>
+  div(
+    [Class('inline-block border-2 border-gray-600')],
+    Array.makeBy(GAME.GRID_SIZE, y =>
+      div(
+        [Class('flex')],
+        Array.makeBy(GAME.GRID_SIZE, x => cellView(x, y, model)),
+      ),
+    ),
+  )
+
+const cellView = (x: number, y: number, model: Model): Html => {
+  const isSnakeHead = Position.equivalence({ x, y }, model.snake[0])
+  const isSnakeTail = pipe(
+    model.snake,
+    Array.tailNonEmpty,
+    Array.some(segment => Position.equivalence({ x, y }, segment)),
+  )
+  const isApple = Position.equivalence({ x, y }, model.apple)
+
+  const cellClass = M.value({ isSnakeHead, isSnakeTail, isApple }).pipe(
+    M.when({ isSnakeHead: true }, () => 'bg-green-700'),
+    M.when({ isSnakeTail: true }, () => 'bg-green-500'),
+    M.when({ isApple: true }, () => 'bg-red-500'),
+    M.orElse(() => 'bg-gray-800'),
+  )
+
+  return div([Class(`w-6 h-6 ${cellClass}`)], [])
+}
+```
+
+## Complete Source Code
+
+<Card title="snake/" icon="github" href="https://github.com/foldkit/foldkit/tree/main/examples/snake">
+  View the complete source code on GitHub
+</Card>
+
+### Key Files
+
+- `src/main.ts` - Main game logic (375 lines)
+- `src/domain/snake.ts` - Snake operations
+- `src/domain/apple.ts` - Apple generation
+- `src/domain/position.ts` - Position utilities
+- `src/domain/direction.ts` - Direction logic
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Stopwatch" icon="clock" href="/examples/stopwatch">
+    Learn more about time-based subscriptions
+  </Card>
+  <Card title="WebSocket Chat" icon="message" href="/examples/websocket-chat">
+    Build an app with network subscriptions
+  </Card>
+</CardGroup>

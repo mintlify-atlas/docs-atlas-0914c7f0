@@ -1,80 +1,422 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Build your first Foldkit application in minutes
 ---
 
-## Get started in three steps
+# Quickstart
 
-Get your documentation site running locally and make your first customization.
+This guide walks you through building a complete counter application with Foldkit. You'll learn the core concepts—Model, Message, Update, and View—by building a working example.
 
-### Step 1: Set up your local environment
+## Prerequisites
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+Make sure you have Foldkit installed. If not, see the [Installation guide](/installation).
 
-### Step 2: Deploy your changes
+## The Complete Counter
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+Here's a complete Foldkit application. We'll break down each section below:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+```typescript src/main.ts
+import { Match as M, Schema as S } from 'effect'
+import { Runtime } from 'foldkit'
+import { Command } from 'foldkit/command'
+import { Html, html } from 'foldkit/html'
+import { m } from 'foldkit/message'
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+// MODEL
 
-### Step 3: Go live
+const Model = S.Struct({ count: S.Number })
+type Model = typeof Model.Type
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+// MESSAGE
 
-## Next steps
+const ClickedDecrement = m('ClickedDecrement')
+const ClickedIncrement = m('ClickedIncrement')
+const ClickedReset = m('ClickedReset')
 
-Now that you have your docs running, explore these key features:
+const Message = S.Union(ClickedDecrement, ClickedIncrement, ClickedReset)
+export type Message = typeof Message.Type
 
-<CardGroup cols={2}>
+// UPDATE
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+const update = (
+  model: Model,
+  message: Message,
+): [Model, ReadonlyArray<Command<Message>>] =>
+  M.value(message).pipe(
+    M.withReturnType<[Model, ReadonlyArray<Command<Message>>]>(),
+    M.tagsExhaustive({
+      ClickedDecrement: () => [{ count: model.count - 1 }, []],
+      ClickedIncrement: () => [{ count: model.count + 1 }, []],
+      ClickedReset: () => [{ count: 0 }, []],
+    }),
+  )
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+// INIT
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+const init: Runtime.ElementInit<Model, Message> = () => [{ count: 0 }, []]
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+// VIEW
 
-</CardGroup>
+const { div, button, Class, OnClick } = html<Message>()
+
+const view = (model: Model): Html =>
+  div(
+    [
+      Class(
+        'min-h-screen bg-white flex flex-col items-center justify-center gap-6 p-6',
+      ),
+    ],
+    [
+      div(
+        [Class('text-6xl font-bold text-gray-800')],
+        [model.count.toString()],
+      ),
+      div(
+        [Class('flex flex-wrap justify-center gap-4')],
+        [
+          button([OnClick(ClickedDecrement()), Class(buttonStyle)], ['-']),
+          button([OnClick(ClickedReset()), Class(buttonStyle)], ['Reset']),
+          button([OnClick(ClickedIncrement()), Class(buttonStyle)], ['+']),
+        ],
+      ),
+    ],
+  )
+
+const buttonStyle = 'bg-black text-white hover:bg-gray-700 px-4 py-2 transition'
+
+// RUN
+
+const element = Runtime.makeElement({
+  Model,
+  init,
+  update,
+  view,
+  container: document.getElementById('root')!,
+})
+
+Runtime.run(element)
+```
+
+This is all the code you need for a fully functional counter application. Let's break down what each section does.
+
+## Understanding the Architecture
+
+### 1. Model — Your Application State
+
+The Model is your single source of truth. It's defined as an Effect Schema, which gives you runtime validation and type safety:
+
+```typescript
+const Model = S.Struct({ count: S.Number })
+type Model = typeof Model.Type
+```
+
+This model represents a counter with a single `count` field. Every Foldkit application has exactly one Model that contains all the state.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+Your Model is always a Schema. This gives you free validation, serialization, and type inference.
 </Note>
+
+### 2. Message — Things That Can Happen
+
+Messages represent events that occur in your application. They're defined as tagged unions using the `m` helper:
+
+```typescript
+import { m } from 'foldkit/message'
+
+const ClickedDecrement = m('ClickedDecrement')
+const ClickedIncrement = m('ClickedIncrement')
+const ClickedReset = m('ClickedReset')
+
+const Message = S.Union(ClickedDecrement, ClickedIncrement, ClickedReset)
+type Message = typeof Message.Type
+```
+
+Each message is a **fact** about what happened ("user clicked decrement"), not a command ("decrement the counter"). The update function decides what to do with each message.
+
+<Note>
+Name messages as past-tense events: `ClickedIncrement`, not `IncrementCounter`. This keeps your architecture unidirectional.
+</Note>
+
+### 3. Update — State Transitions
+
+The update function is a pure function that takes the current model and a message, then returns:
+1. The new model
+2. An array of commands to execute (side effects)
+
+```typescript
+import { Match as M } from 'effect'
+import { Command } from 'foldkit/command'
+
+const update = (
+  model: Model,
+  message: Message,
+): [Model, ReadonlyArray<Command<Message>>] =>
+  M.value(message).pipe(
+    M.withReturnType<[Model, ReadonlyArray<Command<Message>>]>(),
+    M.tagsExhaustive({
+      ClickedDecrement: () => [{ count: model.count - 1 }, []],
+      ClickedIncrement: () => [{ count: model.count + 1 }, []],
+      ClickedReset: () => [{ count: 0 }, []],
+    }),
+  )
+```
+
+We use Effect's `Match` to exhaustively handle every message type. TypeScript will error if you forget to handle a message.
+
+In this example, we have no side effects, so we return an empty command array `[]`. Later examples will show commands in action.
+
+<Note>
+The update function must be pure—no mutations, no side effects. Side effects are returned as Commands.
+</Note>
+
+### 4. Init — Starting State
+
+The init function returns your initial model and any commands to run on startup:
+
+```typescript
+const init: Runtime.ElementInit<Model, Message> = () => [{ count: 0 }, []]
+```
+
+For this counter, we start with a count of 0 and no initial commands.
+
+### 5. View — Rendering Your Model
+
+The view function takes your model and returns HTML. It's powered by a virtual DOM (Snabbdom) for efficient updates:
+
+```typescript
+import { Html, html } from 'foldkit/html'
+
+const { div, button, Class, OnClick } = html<Message>()
+
+const view = (model: Model): Html =>
+  div(
+    [Class('min-h-screen bg-white flex flex-col items-center justify-center gap-6 p-6')],
+    [
+      div([Class('text-6xl font-bold text-gray-800')], [model.count.toString()]),
+      div(
+        [Class('flex flex-wrap justify-center gap-4')],
+        [
+          button([OnClick(ClickedDecrement()), Class(buttonStyle)], ['-']),
+          button([OnClick(ClickedReset()), Class(buttonStyle)], ['Reset']),
+          button([OnClick(ClickedIncrement()), Class(buttonStyle)], ['+']),
+        ],
+      ),
+    ],
+  )
+
+const buttonStyle = 'bg-black text-white hover:bg-gray-700 px-4 py-2 transition'
+```
+
+The `html` function is parameterized with your `Message` type, giving you type-safe event handlers. When a button is clicked, it dispatches the corresponding message to your update function.
+
+<Note>
+Views are pure functions of your model. Same model in, same HTML out. No local state, no refs.
+</Note>
+
+### 6. Runtime — Wiring It Together
+
+Finally, we wire everything together and run the application:
+
+```typescript
+import { Runtime } from 'foldkit'
+
+const element = Runtime.makeElement({
+  Model,
+  init,
+  update,
+  view,
+  container: document.getElementById('root')!,
+})
+
+Runtime.run(element)
+```
+
+The runtime handles:
+- Initializing your model with `init`
+- Dispatching messages to your `update` function
+- Running commands
+- Calling your `view` function when the model changes
+- Efficiently updating the DOM
+
+## The Foldkit Loop
+
+Now that you've seen all the pieces, here's how they work together:
+
+<Steps>
+  <Step title="Initialization">
+    The runtime calls `init()` to get your starting model and any initial commands.
+  </Step>
+
+  <Step title="First Render">
+    The runtime calls `view(model)` to render your initial UI.
+  </Step>
+
+  <Step title="User Interaction">
+    User clicks a button, which dispatches a message (e.g., `ClickedIncrement()`).
+  </Step>
+
+  <Step title="Update">
+    The runtime calls `update(model, message)` to get the new model and commands.
+  </Step>
+
+  <Step title="Command Execution">
+    The runtime executes any commands (we'll see this in the next example).
+  </Step>
+
+  <Step title="Re-render">
+    The runtime calls `view(newModel)` and efficiently updates the DOM.
+  </Step>
+
+  <Step title="Repeat">
+    Back to step 3. The loop continues until your application is unmounted.
+  </Step>
+</Steps>
+
+## Adding Side Effects
+
+Let's enhance our counter with a side effect—logging to the console when the count changes. This demonstrates how Commands work:
+
+```typescript
+import { Console, Effect } from 'effect'
+
+const logCount = (count: number): Command<never> =>
+  Console.log(`Count is now: ${count}`).pipe(
+    Effect.map(() => Effect.succeed(/* no message to return */))
+  )
+
+const update = (
+  model: Model,
+  message: Message,
+): [Model, ReadonlyArray<Command<Message>>] =>
+  M.value(message).pipe(
+    M.withReturnType<[Model, ReadonlyArray<Command<Message>>]>(),
+    M.tagsExhaustive({
+      ClickedDecrement: () => {
+        const newCount = model.count - 1
+        return [{ count: newCount }, [logCount(newCount)]]
+      },
+      ClickedIncrement: () => {
+        const newCount = model.count + 1
+        return [{ count: newCount }, [logCount(newCount)]]
+      },
+      ClickedReset: () => [{ count: 0 }, [logCount(0)]],
+    }),
+  )
+```
+
+Commands are Effect programs that the runtime executes **after** updating the model. They can:
+- Perform side effects (logging, localStorage, HTTP requests)
+- Return messages to trigger further updates
+- Use any Effect combinator (timeout, retry, race, etc.)
+
+<Warning>
+Never perform side effects directly in `update` or `view`. Always return them as Commands.
+</Warning>
+
+## Handling Async Operations
+
+Here's a more realistic example—fetching weather data from an API. This shows how to model async states and handle both success and failure:
+
+```typescript
+import { FetchHttpClient, HttpClient } from '@effect/platform'
+
+// MODEL - Async state as a discriminated union
+const WeatherInit = ts('WeatherInit')
+const WeatherLoading = ts('WeatherLoading')
+const WeatherSuccess = ts('WeatherSuccess', { data: WeatherData })
+const WeatherFailure = ts('WeatherFailure', { error: S.String })
+
+const Model = S.Struct({
+  zipCode: S.String,
+  weather: S.Union(WeatherInit, WeatherLoading, WeatherSuccess, WeatherFailure),
+})
+
+// MESSAGES
+const SubmittedWeatherForm = m('SubmittedWeatherForm')
+const SucceededWeatherFetch = m('SucceededWeatherFetch', { weather: WeatherData })
+const FailedWeatherFetch = m('FailedWeatherFetch', { error: S.String })
+
+// COMMAND
+const fetchWeather = (zipCode: string): Command<
+  typeof SucceededWeatherFetch | typeof FailedWeatherFetch
+> =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient
+    const response = yield* client.get(`https://api.example.com/weather/${zipCode}`)
+    const data = yield* response.json
+
+    return SucceededWeatherFetch({ weather: data })
+  }).pipe(
+    Effect.catchAll(() =>
+      Effect.succeed(FailedWeatherFetch({ error: 'Failed to fetch weather' }))
+    ),
+    Effect.provide(FetchHttpClient.layer),
+  )
+
+// UPDATE
+const update = (model: Model, message: Message) =>
+  M.value(message).pipe(
+    M.withReturnType<[Model, ReadonlyArray<Command<Message>>]>(),
+    M.tagsExhaustive({
+      SubmittedWeatherForm: () => [
+        { ...model, weather: WeatherLoading() },
+        [fetchWeather(model.zipCode)],
+      ],
+      SucceededWeatherFetch: ({ weather }) => [
+        { ...model, weather: WeatherSuccess({ data: weather }) },
+        [],
+      ],
+      FailedWeatherFetch: ({ error }) => [
+        { ...model, weather: WeatherFailure({ error }) },
+        [],
+      ],
+    }),
+  )
+```
+
+Key patterns:
+
+1. **Model async state as a union** — `Init | Loading | Success | Failure` makes impossible states impossible
+2. **Commands return messages** — `fetchWeather` returns either `SucceededWeatherFetch` or `FailedWeatherFetch`
+3. **Catch all errors** — Use `Effect.catchAll` to convert failures into success messages, ensuring the app never crashes
+
+<Note>
+For a complete working example, see the [weather example](https://github.com/devinjameson/foldkit/tree/main/examples/weather) in the Foldkit repository.
+</Note>
+
+## Try It Yourself
+
+Create a new Foldkit project with the counter example:
+
+```bash
+npx create-foldkit-app@latest --name my-counter --example counter --package-manager pnpm
+cd my-counter
+pnpm dev
+```
+
+Then try modifying it:
+
+- Add a "Double" button that multiplies the count by 2
+- Add a "Reset to 10" button
+- Add a text input to set the count to any number
+- Display "Even" or "Odd" below the count
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book" href="/concepts/model">
+    Dive deeper into Model, Message, Update, and View
+  </Card>
+
+  <Card title="Examples" icon="code" href="https://github.com/devinjameson/foldkit/tree/main/examples">
+    Explore 12+ example applications
+  </Card>
+
+  <Card title="Commands" icon="bolt" href="/concepts/commands">
+    Learn how to handle side effects
+  </Card>
+
+  <Card title="Routing" icon="route" href="/guides/routing">
+    Add type-safe routing to your app
+  </Card>
+</CardGroup>

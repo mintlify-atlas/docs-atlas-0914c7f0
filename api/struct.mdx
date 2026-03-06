@@ -1,0 +1,387 @@
+---
+title: Struct
+description: Utilities for immutably updating struct fields with type-safe transformations
+---
+
+The struct module provides utilities for immutably evolving struct fields using transform functions.
+
+## Overview
+
+Foldkit's `evo` wraps Effect's `Struct.evolve` with stricter type checking to prevent typos in field names. It enables functional, immutable updates to model state.
+
+```typescript
+import { evo } from 'foldkit/struct'
+
+const model = { count: 0, name: 'Alice' }
+
+const updated = evo(model, {
+  count: (n) => n + 1,
+  name: (s) => s.toUpperCase(),
+})
+// { count: 1, name: 'ALICE' }
+```
+
+## evo
+
+Immutably updates fields of a struct by applying transform functions.
+
+<ParamField path="obj" type="O" required>
+  The struct to evolve
+</ParamField>
+
+<ParamField path="transforms" type="EvolveTransform<O>" required>
+  Object mapping field names to transform functions. Keys must exist in the struct.
+</ParamField>
+
+### Returns
+
+A new struct with transformed fields. Fields not included in the transforms object remain unchanged.
+
+### Example
+
+```typescript
+import { evo } from 'foldkit/struct'
+import { Number } from 'effect'
+
+const model = {
+  count: 5,
+  isActive: false,
+  name: 'Alice',
+}
+
+// Update multiple fields
+const updated = evo(model, {
+  count: Number.increment,
+  isActive: (active) => !active,
+})
+// { count: 6, isActive: true, name: 'Alice' }
+
+// Update single field
+const renamed = evo(model, {
+  name: (name) => name.toUpperCase(),
+})
+// { count: 5, isActive: false, name: 'ALICE' }
+```
+
+### Curried Usage
+
+`evo` can be called with just the transforms to create a reusable update function:
+
+```typescript
+import { evo } from 'foldkit/struct'
+import { Array } from 'effect'
+
+type User = {
+  count: number
+  isActive: boolean
+}
+
+const incrementCount = evo<User>({
+  count: (n) => n + 1,
+})
+
+const users: ReadonlyArray<User> = [
+  { count: 0, isActive: true },
+  { count: 5, isActive: false },
+]
+
+const incremented = Array.map(users, incrementCount)
+// [{ count: 1, isActive: true }, { count: 6, isActive: false }]
+```
+
+### Type Safety
+
+The `StrictKeys` type ensures all keys in the transforms object exist in the struct:
+
+```typescript
+import { evo } from 'foldkit/struct'
+
+const model = { count: 0, name: 'Alice' }
+
+// ✅ Valid - 'count' exists
+evo(model, {
+  count: (n) => n + 1,
+})
+
+// ❌ Type error - 'invalid' doesn't exist
+evo(model, {
+  invalid: (n) => n + 1,
+})
+```
+
+## makeConstrainedEvo
+
+Creates a variant of `evo` whose transforms are checked against a supertype. Useful in generic contexts where `evo`'s `StrictKeys` cannot resolve `keyof` on an open type parameter.
+
+### Returns
+
+A function that evolves a subtype model while preserving all fields not in the transform.
+
+### Example
+
+```typescript
+import { makeConstrainedEvo } from 'foldkit/struct'
+import { Schema as S } from 'effect'
+
+// Base model constraint
+type BaseModel = {
+  count: number
+}
+
+// Specific model with additional fields
+const Model = S.Struct({
+  count: S.Number,
+  name: S.String,
+  isActive: S.Boolean,
+})
+type Model = typeof Model.Type
+
+// Create constrained evo for base fields
+const evoBase = makeConstrainedEvo<BaseModel>()
+
+const model: Model = {
+  count: 0,
+  name: 'Alice',
+  isActive: true,
+}
+
+// Update base field while preserving all other fields
+const updated = evoBase(model, {
+  count: (n) => n + 1,
+})
+// { count: 1, name: 'Alice', isActive: true }
+```
+
+### Use Case: Generic Update Functions
+
+```typescript
+import { makeConstrainedEvo } from 'foldkit/struct'
+import { Schema as S, Match } from 'effect'
+
+// Base model for all routes
+type BaseModel = {
+  route: Route
+}
+
+// Route-specific models
+const HomeModel = S.Struct({
+  route: S.Literal('Home'),
+  greeting: S.String,
+})
+
+const ProfileModel = S.Struct({
+  route: S.Literal('Profile'),
+  userId: S.String,
+  isEditing: S.Boolean,
+})
+
+type Model = typeof HomeModel.Type | typeof ProfileModel.Type
+
+// Generic update that works for any route
+const evoModel = makeConstrainedEvo<BaseModel>()
+
+const updateRoute = <M extends BaseModel>(model: M, route: Route): M =>
+  evoModel(model, { route: () => route })
+
+// Type-safe updates
+const home: typeof HomeModel.Type = {
+  route: 'Home',
+  greeting: 'Hello',
+}
+
+const updated = updateRoute(home, 'Profile')
+// Type error - route mismatch, but demonstrates preservation
+```
+
+## Usage Patterns
+
+### In Update Functions
+
+```typescript
+import { evo } from 'foldkit/struct'
+import { Match } from 'effect'
+import type { Message } from './message'
+
+type Model = {
+  count: number
+  lastAction: string
+  isRunning: boolean
+}
+
+const update = (model: Model, message: Message) =>
+  Match.value(message).pipe(
+    Match.tag('Increment', () =>
+      evo(model, {
+        count: (n) => n + 1,
+        lastAction: () => 'increment',
+      }),
+    ),
+    Match.tag('Decrement', () =>
+      evo(model, {
+        count: (n) => n - 1,
+        lastAction: () => 'decrement',
+      }),
+    ),
+    Match.tag('Reset', () =>
+      evo(model, {
+        count: () => 0,
+        lastAction: () => 'reset',
+      }),
+    ),
+    Match.exhaustive,
+  )
+```
+
+### With Effect Utilities
+
+```typescript
+import { evo } from 'foldkit/struct'
+import { Number, Boolean, String, Array } from 'effect'
+
+type Model = {
+  count: number
+  isActive: boolean
+  name: string
+  items: ReadonlyArray<string>
+}
+
+const model: Model = {
+  count: 5,
+  isActive: false,
+  name: 'alice',
+  items: ['a', 'b'],
+}
+
+// Use Effect's utility functions
+const updated = evo(model, {
+  count: Number.increment,
+  isActive: Boolean.not,
+  name: String.toUpperCase,
+  items: Array.append('c'),
+})
+// {
+//   count: 6,
+//   isActive: true,
+//   name: 'ALICE',
+//   items: ['a', 'b', 'c']
+// }
+```
+
+### Nested Updates
+
+```typescript
+import { evo } from 'foldkit/struct'
+
+type Model = {
+  user: {
+    name: string
+    settings: {
+      theme: string
+      notifications: boolean
+    }
+  }
+  count: number
+}
+
+const model: Model = {
+  user: {
+    name: 'Alice',
+    settings: {
+      theme: 'light',
+      notifications: true,
+    },
+  },
+  count: 0,
+}
+
+// Update nested field
+const updated = evo(model, {
+  user: (user) =>
+    evo(user, {
+      settings: (settings) =>
+        evo(settings, {
+          theme: () => 'dark',
+        }),
+    }),
+})
+// { user: { name: 'Alice', settings: { theme: 'dark', notifications: true } }, count: 0 }
+```
+
+### Conditional Updates
+
+```typescript
+import { evo } from 'foldkit/struct'
+import { pipe } from 'effect'
+
+type Model = {
+  count: number
+  isEven: boolean
+}
+
+const incrementAndCheck = (model: Model): Model =>
+  pipe(
+    model,
+    evo({
+      count: (n) => n + 1,
+    }),
+    (m) =>
+      evo(m, {
+        isEven: () => m.count % 2 === 0,
+      }),
+  )
+
+const model: Model = { count: 5, isEven: false }
+const updated = incrementAndCheck(model)
+// { count: 6, isEven: true }
+```
+
+## Complete Example
+
+```typescript
+import { evo } from 'foldkit/struct'
+import { Schema as S, Match, Number, Array } from 'effect'
+import { m } from 'foldkit/schema'
+
+// Messages
+const AddItem = m('AddItem', { item: S.String })
+const RemoveItem = m('RemoveItem', { index: S.Number })
+const IncrementCount = m('IncrementCount')
+const ToggleActive = m('ToggleActive')
+
+const Message = S.Union(AddItem, RemoveItem, IncrementCount, ToggleActive)
+type Message = typeof Message.Type
+
+// Model
+const Model = S.Struct({
+  items: S.Array(S.String),
+  count: S.Number,
+  isActive: S.Boolean,
+})
+type Model = typeof Model.Type
+
+// Update with evo
+const update = (model: Model, message: Message) =>
+  Match.value(message).pipe(
+    Match.tag('AddItem', ({ item }) =>
+      evo(model, {
+        items: Array.append(item),
+      }),
+    ),
+    Match.tag('RemoveItem', ({ index }) =>
+      evo(model, {
+        items: Array.remove(index),
+      }),
+    ),
+    Match.tag('IncrementCount', () =>
+      evo(model, {
+        count: Number.increment,
+      }),
+    ),
+    Match.tag('ToggleActive', () =>
+      evo(model, {
+        isActive: (active) => !active,
+      }),
+    ),
+    Match.exhaustive,
+  )
+```

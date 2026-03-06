@@ -1,0 +1,836 @@
+---
+title: HTML DSL
+description: Type-safe HTML DSL for building virtual DOM elements with attributes and event handlers
+---
+
+The HTML DSL provides a type-safe API for constructing virtual DOM elements using Effect. All elements and attributes are typed and support message-driven event handling.
+
+## Core Types
+
+### Html
+
+```typescript
+type Html = Effect.Effect<VNode | null, never, Dispatch>
+```
+
+A virtual DOM element represented as an Effect that produces a VNode. This is the return type of all element constructors.
+
+### TagName
+
+Union type of all valid HTML, SVG, and MathML tag names. Includes standard HTML elements (`div`, `button`, `input`, etc.), SVG elements (`svg`, `path`, `circle`, etc.), and MathML elements (`math`, `mfrac`, etc.).
+
+### Attribute\<Message\>
+
+Tagged union of all valid HTML, SVG, and MathML attributes. See [Attributes](#attributes) for the complete list.
+
+### KeyboardModifiers
+
+```typescript
+type KeyboardModifiers = Readonly<{
+  shiftKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+  metaKey: boolean
+}>
+```
+
+Modifier key state extracted from keyboard events.
+
+## Creating Elements
+
+All element functions are accessed through the `html()` factory function:
+
+```typescript
+import { html } from 'foldkit/html'
+
+const { div, button, input, span } = html<Message>()
+```
+
+### Standard Elements
+
+Most HTML elements accept attributes and children:
+
+```typescript
+const element = div(
+  [Class('container'), Id('main')],
+  [span([], ['Hello']), button([OnClick(message)], ['Click me'])]
+)
+```
+
+<ParamField path="attributes" type="ReadonlyArray<Attribute<Message>>" default="[]">
+  Array of attributes to apply to the element.
+</ParamField>
+
+<ParamField path="children" type="ReadonlyArray<Html | string>" default="[]">
+  Child elements or text nodes. Strings are rendered as text nodes.
+</ParamField>
+
+### Void Elements
+
+Self-closing elements (like `input`, `img`, `br`) only accept attributes:
+
+```typescript
+const selfClosing = input([Type('text'), Value(model.username)])
+```
+
+<ParamField path="attributes" type="ReadonlyArray<Attribute<Message>>" default="[]">
+  Array of attributes to apply to the element.
+</ParamField>
+
+### Keyed Elements
+
+Use keyed elements when you need stable identity for efficient diffing:
+
+```typescript
+const { keyed } = html<Message>()
+
+const item = keyed('div')(
+  `item-${id}`,
+  [Class('item')],
+  [content]
+)
+```
+
+<ParamField path="key" type="string" required>
+  Unique string identifier for this element instance. Must be stable across renders.
+</ParamField>
+
+<ParamField path="attributes" type="ReadonlyArray<Attribute<Message>>" default="[]">
+  Array of attributes to apply to the element (excluding Key).
+</ParamField>
+
+<ParamField path="children" type="ReadonlyArray<Html | string>" default="[]">
+  Child elements or text nodes.
+</ParamField>
+
+### Empty Element
+
+```typescript
+const { empty } = html<Message>()
+
+const maybeElement = condition ? div([], ['content']) : empty
+```
+
+Returns `null` — useful for conditional rendering.
+
+## Attributes
+
+All attributes are constructor functions accessed from `html<Message>()`:
+
+```typescript
+const { Class, Id, OnClick, Value } = html<Message>()
+```
+
+### Common Attributes
+
+<ParamField path="Class" type="(value: string) => Attribute<Message>">
+  CSS class names (space-separated string).
+</ParamField>
+
+<ParamField path="Id" type="(value: string) => Attribute<Message>">
+  Element ID.
+</ParamField>
+
+<ParamField path="Key" type="(value: string) => Attribute<Message>">
+  Keying identifier for Snabbdom diffing. Prefer `keyed()` elements over manual Key usage.
+</ParamField>
+
+<ParamField path="Title" type="(value: string) => Attribute<Message>">
+  Tooltip text.
+</ParamField>
+
+<ParamField path="Lang" type="(value: string) => Attribute<Message>">
+  Language code.
+</ParamField>
+
+<ParamField path="Dir" type="(value: string) => Attribute<Message>">
+  Text direction (`ltr` or `rtl`).
+</ParamField>
+
+<ParamField path="Tabindex" type="(value: number) => Attribute<Message>">
+  Tab order index.
+</ParamField>
+
+<ParamField path="Hidden" type="(value: boolean) => Attribute<Message>">
+  Hides element from display and accessibility tree.
+</ParamField>
+
+<ParamField path="Style" type="(value: Record<string, string>) => Attribute<Message>">
+  Inline CSS styles as an object.
+</ParamField>
+
+<ParamField path="Attribute" type="(key: string, value: string) => Attribute<Message>">
+  Generic attribute for any HTML attribute not covered by specific constructors.
+</ParamField>
+
+<ParamField path="DataAttribute" type="(key: string, value: string) => Attribute<Message>">
+  Data attribute (automatically prefixed with `data-`).
+</ParamField>
+
+<ParamField path="InnerHTML" type="(value: string) => Attribute<Message>">
+  Sets raw HTML content. Use with caution.
+</ParamField>
+
+### Mouse Events
+
+<ParamField path="OnClick" type="(message: Message) => Attribute<Message>">
+  Click event. Dispatches the message when clicked.
+</ParamField>
+
+<ParamField path="OnDblClick" type="(message: Message) => Attribute<Message>">
+  Double-click event.
+</ParamField>
+
+<ParamField path="OnMouseDown" type="(message: Message) => Attribute<Message>">
+  Mouse button pressed.
+</ParamField>
+
+<ParamField path="OnMouseUp" type="(message: Message) => Attribute<Message>">
+  Mouse button released.
+</ParamField>
+
+<ParamField path="OnMouseEnter" type="(message: Message) => Attribute<Message>">
+  Mouse enters element (does not bubble).
+</ParamField>
+
+<ParamField path="OnMouseLeave" type="(message: Message) => Attribute<Message>">
+  Mouse leaves element (does not bubble).
+</ParamField>
+
+<ParamField path="OnMouseOver" type="(message: Message) => Attribute<Message>">
+  Mouse enters element or descendants (bubbles).
+</ParamField>
+
+<ParamField path="OnMouseOut" type="(message: Message) => Attribute<Message>">
+  Mouse leaves element or descendants (bubbles).
+</ParamField>
+
+<ParamField path="OnMouseMove" type="(message: Message) => Attribute<Message>">
+  Mouse moves within element.
+</ParamField>
+
+### Pointer Events
+
+<ParamField path="OnPointerMove" type="(f: (screenX: number, screenY: number, pointerType: string) => Option<Message>) => Attribute<Message>">
+  Pointer movement with coordinates and type. Return `Option.some(message)` to dispatch, `Option.none()` to ignore.
+</ParamField>
+
+<ParamField path="OnPointerLeave" type="(f: (pointerType: string) => Option<Message>) => Attribute<Message>">
+  Pointer leaves element.
+</ParamField>
+
+<ParamField path="OnPointerDown" type="(f: (pointerType: string, button: number, screenX: number, screenY: number, timeStamp: number) => Option<Message>) => Attribute<Message>">
+  Pointer button pressed.
+</ParamField>
+
+<ParamField path="OnPointerUp" type="(f: (screenX: number, screenY: number, pointerType: string, timeStamp: number) => Option<Message>) => Attribute<Message>">
+  Pointer button released.
+</ParamField>
+
+### Keyboard Events
+
+<ParamField path="OnKeyDown" type="(f: (key: string, modifiers: KeyboardModifiers) => Message) => Attribute<Message>">
+  Key pressed. Always dispatches a message.
+</ParamField>
+
+<ParamField path="OnKeyDownPreventDefault" type="(f: (key: string, modifiers: KeyboardModifiers) => Option<Message>) => Attribute<Message>">
+  Key pressed with conditional preventDefault. Return `Option.some(message)` to prevent default and dispatch.
+</ParamField>
+
+<ParamField path="OnKeyUp" type="(f: (key: string, modifiers: KeyboardModifiers) => Message) => Attribute<Message>">
+  Key released.
+</ParamField>
+
+<ParamField path="OnKeyUpPreventDefault" type="(f: (key: string, modifiers: KeyboardModifiers) => Option<Message>) => Attribute<Message>">
+  Key released with conditional preventDefault.
+</ParamField>
+
+<ParamField path="OnKeyPress" type="(f: (key: string, modifiers: KeyboardModifiers) => Message) => Attribute<Message>">
+  Key press event (deprecated browser API but still supported).
+</ParamField>
+
+### Focus Events
+
+<ParamField path="OnFocus" type="(message: Message) => Attribute<Message>">
+  Element receives focus.
+</ParamField>
+
+<ParamField path="OnBlur" type="(message: Message) => Attribute<Message>">
+  Element loses focus.
+</ParamField>
+
+### Form Events
+
+<ParamField path="OnInput" type="(f: (value: string) => Message) => Attribute<Message>">
+  Input value changed (fires on every keystroke).
+</ParamField>
+
+<ParamField path="OnChange" type="(f: (value: string) => Message) => Attribute<Message>">
+  Input value changed and committed (fires on blur for text inputs).
+</ParamField>
+
+<ParamField path="OnSubmit" type="(message: Message) => Attribute<Message>">
+  Form submitted. Automatically prevents default browser submission.
+</ParamField>
+
+<ParamField path="OnReset" type="(message: Message) => Attribute<Message>">
+  Form reset.
+</ParamField>
+
+<ParamField path="OnToggle" type="(f: (isOpen: boolean) => Message) => Attribute<Message>">
+  Details element toggled.
+</ParamField>
+
+### Other Events
+
+<ParamField path="OnScroll" type="(message: Message) => Attribute<Message>">
+  Element scrolled.
+</ParamField>
+
+<ParamField path="OnWheel" type="(message: Message) => Attribute<Message>">
+  Mouse wheel scrolled.
+</ParamField>
+
+<ParamField path="OnCopy" type="(message: Message) => Attribute<Message>">
+  Content copied.
+</ParamField>
+
+<ParamField path="OnCut" type="(message: Message) => Attribute<Message>">
+  Content cut.
+</ParamField>
+
+<ParamField path="OnPaste" type="(message: Message) => Attribute<Message>">
+  Content pasted.
+</ParamField>
+
+<ParamField path="OnCancel" type="(message: Message) => Attribute<Message>">
+  Dialog cancelled. Automatically prevents default.
+</ParamField>
+
+### Form Input Attributes
+
+<ParamField path="Value" type="(value: string) => Attribute<Message>">
+  Input value.
+</ParamField>
+
+<ParamField path="Checked" type="(value: boolean) => Attribute<Message>">
+  Checkbox or radio checked state.
+</ParamField>
+
+<ParamField path="Selected" type="(value: boolean) => Attribute<Message>">
+  Option selected state.
+</ParamField>
+
+<ParamField path="Placeholder" type="(value: string) => Attribute<Message>">
+  Input placeholder text.
+</ParamField>
+
+<ParamField path="Name" type="(value: string) => Attribute<Message>">
+  Form control name.
+</ParamField>
+
+<ParamField path="Type" type="(value: string) => Attribute<Message>">
+  Input type (`text`, `email`, `password`, etc.).
+</ParamField>
+
+<ParamField path="Disabled" type="(value: boolean) => Attribute<Message>">
+  Disables form control.
+</ParamField>
+
+<ParamField path="Readonly" type="(value: boolean) => Attribute<Message>">
+  Makes form control read-only.
+</ParamField>
+
+<ParamField path="Required" type="(value: boolean) => Attribute<Message>">
+  Marks form control as required.
+</ParamField>
+
+<ParamField path="Autofocus" type="(value: boolean) => Attribute<Message>">
+  Auto-focuses element on page load.
+</ParamField>
+
+<ParamField path="Spellcheck" type="(value: boolean) => Attribute<Message>">
+  Enables spellcheck.
+</ParamField>
+
+<ParamField path="Autocorrect" type="(value: string) => Attribute<Message>">
+  Autocorrect behavior (`on` or `off`).
+</ParamField>
+
+<ParamField path="Autocapitalize" type="(value: string) => Attribute<Message>">
+  Autocapitalization behavior.
+</ParamField>
+
+<ParamField path="InputMode" type="(value: string) => Attribute<Message>">
+  Virtual keyboard hint (`numeric`, `email`, etc.).
+</ParamField>
+
+<ParamField path="EnterKeyHint" type="(value: string) => Attribute<Message>">
+  Enter key label hint (`done`, `go`, `search`, etc.).
+</ParamField>
+
+<ParamField path="Multiple" type="(value: boolean) => Attribute<Message>">
+  Allows multiple selections.
+</ParamField>
+
+<ParamField path="Accept" type="(value: string) => Attribute<Message>">
+  File input accepted types.
+</ParamField>
+
+<ParamField path="Autocomplete" type="(value: string) => Attribute<Message>">
+  Autocomplete hint.
+</ParamField>
+
+<ParamField path="Pattern" type="(value: string) => Attribute<Message>">
+  Validation regex pattern.
+</ParamField>
+
+<ParamField path="Maxlength" type="(value: number) => Attribute<Message>">
+  Maximum input length.
+</ParamField>
+
+<ParamField path="Minlength" type="(value: number) => Attribute<Message>">
+  Minimum input length.
+</ParamField>
+
+<ParamField path="Size" type="(value: number) => Attribute<Message>">
+  Input width in characters.
+</ParamField>
+
+<ParamField path="Cols" type="(value: number) => Attribute<Message>">
+  Textarea columns.
+</ParamField>
+
+<ParamField path="Rows" type="(value: number) => Attribute<Message>">
+  Textarea rows.
+</ParamField>
+
+<ParamField path="Max" type="(value: string) => Attribute<Message>">
+  Maximum value for number/date inputs.
+</ParamField>
+
+<ParamField path="Min" type="(value: string) => Attribute<Message>">
+  Minimum value for number/date inputs.
+</ParamField>
+
+<ParamField path="Step" type="(value: string) => Attribute<Message>">
+  Step increment for number inputs.
+</ParamField>
+
+### Link and Media Attributes
+
+<ParamField path="Href" type="(value: string) => Attribute<Message>">
+  Link URL.
+</ParamField>
+
+<ParamField path="Src" type="(value: string) => Attribute<Message>">
+  Media source URL.
+</ParamField>
+
+<ParamField path="Alt" type="(value: string) => Attribute<Message>">
+  Image alt text.
+</ParamField>
+
+<ParamField path="Target" type="(value: string) => Attribute<Message>">
+  Link target (`_blank`, `_self`, etc.).
+</ParamField>
+
+<ParamField path="Rel" type="(value: string) => Attribute<Message>">
+  Link relationship.
+</ParamField>
+
+<ParamField path="Download" type="(value: string) => Attribute<Message>">
+  Download filename hint.
+</ParamField>
+
+### Form Attributes
+
+<ParamField path="For" type="(value: string) => Attribute<Message>">
+  Label target element ID.
+</ParamField>
+
+<ParamField path="Action" type="(value: string) => Attribute<Message>">
+  Form submission URL.
+</ParamField>
+
+<ParamField path="Method" type="(value: string) => Attribute<Message>">
+  Form HTTP method.
+</ParamField>
+
+<ParamField path="Enctype" type="(value: string) => Attribute<Message>">
+  Form encoding type.
+</ParamField>
+
+<ParamField path="Novalidate" type="(value: boolean) => Attribute<Message>">
+  Disables form validation.
+</ParamField>
+
+### ARIA Attributes
+
+<ParamField path="Role" type="(value: string) => Attribute<Message>">
+  ARIA role.
+</ParamField>
+
+<ParamField path="AriaLabel" type="(value: string) => Attribute<Message>">
+  Accessible label.
+</ParamField>
+
+<ParamField path="AriaLabelledBy" type="(value: string) => Attribute<Message>">
+  ID of labeling element.
+</ParamField>
+
+<ParamField path="AriaDescribedBy" type="(value: string) => Attribute<Message>">
+  ID of describing element.
+</ParamField>
+
+<ParamField path="AriaHidden" type="(value: boolean) => Attribute<Message>">
+  Hides from accessibility tree.
+</ParamField>
+
+<ParamField path="AriaExpanded" type="(value: boolean) => Attribute<Message>">
+  Expandable element state.
+</ParamField>
+
+<ParamField path="AriaSelected" type="(value: boolean) => Attribute<Message>">
+  Selection state.
+</ParamField>
+
+<ParamField path="AriaChecked" type="(value: boolean) => Attribute<Message>">
+  Checked state.
+</ParamField>
+
+<ParamField path="AriaDisabled" type="(value: boolean) => Attribute<Message>">
+  Disabled state.
+</ParamField>
+
+<ParamField path="AriaRequired" type="(value: boolean) => Attribute<Message>">
+  Required field state.
+</ParamField>
+
+<ParamField path="AriaInvalid" type="(value: boolean) => Attribute<Message>">
+  Invalid input state.
+</ParamField>
+
+<ParamField path="AriaLive" type="(value: string) => Attribute<Message>">
+  Live region politeness (`off`, `polite`, `assertive`).
+</ParamField>
+
+<ParamField path="AriaControls" type="(value: string) => Attribute<Message>">
+  ID of controlled element.
+</ParamField>
+
+<ParamField path="AriaCurrent" type="(value: string) => Attribute<Message>">
+  Current item indicator.
+</ParamField>
+
+<ParamField path="AriaOrientation" type="(value: string) => Attribute<Message>">
+  Widget orientation (`horizontal` or `vertical`).
+</ParamField>
+
+<ParamField path="AriaPressed" type="(value: string) => Attribute<Message>">
+  Toggle button state.
+</ParamField>
+
+<ParamField path="AriaHasPopup" type="(value: string) => Attribute<Message>">
+  Popup type (`menu`, `dialog`, etc.).
+</ParamField>
+
+<ParamField path="AriaActiveDescendant" type="(value: string) => Attribute<Message>">
+  ID of active descendant.
+</ParamField>
+
+<ParamField path="AriaSort" type="(value: string) => Attribute<Message>">
+  Column sort direction.
+</ParamField>
+
+<ParamField path="AriaMultiSelectable" type="(value: boolean) => Attribute<Message>">
+  Multi-selection allowed.
+</ParamField>
+
+<ParamField path="AriaModal" type="(value: boolean) => Attribute<Message>">
+  Modal dialog state.
+</ParamField>
+
+<ParamField path="AriaBusy" type="(value: boolean) => Attribute<Message>">
+  Loading state.
+</ParamField>
+
+<ParamField path="AriaErrorMessage" type="(value: string) => Attribute<Message>">
+  ID of error message element.
+</ParamField>
+
+<ParamField path="AriaRoleDescription" type="(value: string) => Attribute<Message>">
+  Custom role description.
+</ParamField>
+
+### SVG Attributes
+
+<ParamField path="ViewBox" type="(value: string) => Attribute<Message>">
+  SVG viewBox.
+</ParamField>
+
+<ParamField path="Xmlns" type="(value: string) => Attribute<Message>">
+  XML namespace.
+</ParamField>
+
+<ParamField path="Fill" type="(value: string) => Attribute<Message>">
+  Fill color.
+</ParamField>
+
+<ParamField path="FillRule" type="(value: string) => Attribute<Message>">
+  Fill rule algorithm.
+</ParamField>
+
+<ParamField path="ClipRule" type="(value: string) => Attribute<Message>">
+  Clip rule algorithm.
+</ParamField>
+
+<ParamField path="Stroke" type="(value: string) => Attribute<Message>">
+  Stroke color.
+</ParamField>
+
+<ParamField path="StrokeWidth" type="(value: string) => Attribute<Message>">
+  Stroke width.
+</ParamField>
+
+<ParamField path="StrokeLinecap" type="(value: string) => Attribute<Message>">
+  Stroke line cap style.
+</ParamField>
+
+<ParamField path="StrokeLinejoin" type="(value: string) => Attribute<Message>">
+  Stroke line join style.
+</ParamField>
+
+<ParamField path="D" type="(value: string) => Attribute<Message>">
+  Path data.
+</ParamField>
+
+<ParamField path="Cx" type="(value: string) => Attribute<Message>">
+  Circle/ellipse center X.
+</ParamField>
+
+<ParamField path="Cy" type="(value: string) => Attribute<Message>">
+  Circle/ellipse center Y.
+</ParamField>
+
+<ParamField path="R" type="(value: string) => Attribute<Message>">
+  Circle radius.
+</ParamField>
+
+<ParamField path="X" type="(value: string) => Attribute<Message>">
+  X coordinate.
+</ParamField>
+
+<ParamField path="Y" type="(value: string) => Attribute<Message>">
+  Y coordinate.
+</ParamField>
+
+<ParamField path="Width" type="(value: string) => Attribute<Message>">
+  Width.
+</ParamField>
+
+<ParamField path="Height" type="(value: string) => Attribute<Message>">
+  Height.
+</ParamField>
+
+<ParamField path="X1" type="(value: string) => Attribute<Message>">
+  Line start X.
+</ParamField>
+
+<ParamField path="Y1" type="(value: string) => Attribute<Message>">
+  Line start Y.
+</ParamField>
+
+<ParamField path="X2" type="(value: string) => Attribute<Message>">
+  Line end X.
+</ParamField>
+
+<ParamField path="Y2" type="(value: string) => Attribute<Message>">
+  Line end Y.
+</ParamField>
+
+<ParamField path="Points" type="(value: string) => Attribute<Message>">
+  Polygon/polyline points.
+</ParamField>
+
+<ParamField path="Transform" type="(value: string) => Attribute<Message>">
+  SVG transform.
+</ParamField>
+
+<ParamField path="Opacity" type="(value: string) => Attribute<Message>">
+  Opacity.
+</ParamField>
+
+<ParamField path="StrokeDasharray" type="(value: string) => Attribute<Message>">
+  Dash pattern.
+</ParamField>
+
+<ParamField path="StrokeDashoffset" type="(value: string) => Attribute<Message>">
+  Dash offset.
+</ParamField>
+
+### Lifecycle Hooks
+
+<ParamField path="OnInsert" type="(f: (element: Element) => void) => Attribute<Message>">
+  Called when element is inserted into the DOM. Useful for imperatively accessing the DOM element.
+</ParamField>
+
+<ParamField path="OnDestroy" type="(f: (element: Element) => void) => Attribute<Message>">
+  Called when element is removed from the DOM. Useful for cleanup.
+</ParamField>
+
+## Memoization
+
+### createLazy
+
+```typescript
+import { createLazy } from 'foldkit/html'
+
+const lazy = createLazy()
+
+const expensiveView = (data: Data): Html =>
+  lazy(renderExpensiveView, [data])
+```
+
+Creates a memoization slot for a view function. Returns cached VNode if function and arguments are referentially equal (`===`) to the previous call.
+
+<ParamField path="fn" type="(...args: Args) => Html" required>
+  View function to memoize.
+</ParamField>
+
+<ParamField path="args" type="ReadonlyArray<unknown>" required>
+  Arguments to pass to the function. Compared by reference.
+</ParamField>
+
+### createKeyedLazy
+
+```typescript
+import { createKeyedLazy } from 'foldkit/html'
+
+const lazy = createKeyedLazy()
+
+const items = Array.map(data, item =>
+  lazy(item.id, renderItem, [item])
+)
+```
+
+Creates a keyed memoization map for view functions rendered in a loop. Each key gets its own cache slot.
+
+<ParamField path="key" type="string" required>
+  Unique identifier for this cache slot.
+</ParamField>
+
+<ParamField path="fn" type="(...args: Args) => Html" required>
+  View function to memoize.
+</ParamField>
+
+<ParamField path="args" type="ReadonlyArray<unknown>" required>
+  Arguments to pass to the function. Compared by reference.
+</ParamField>
+
+## Usage Examples
+
+### Basic Element Construction
+
+```typescript
+import { html } from 'foldkit/html'
+import { m } from 'foldkit/message'
+import { S } from 'effect'
+
+const Clicked = m('Clicked')
+type Message = typeof Clicked.Type
+
+const view = (): Html => {
+  const { div, button, Class, OnClick } = html<Message>()
+
+  return div(
+    [Class('container')],
+    [
+      button(
+        [Class('primary'), OnClick(Clicked())],
+        ['Click me']
+      )
+    ]
+  )
+}
+```
+
+### Conditional Rendering
+
+```typescript
+const { div, empty } = html<Message>()
+
+const view = (showContent: boolean): Html =>
+  div(
+    [],
+    [
+      showContent
+        ? div([Class('content')], ['Content'])
+        : empty
+    ]
+  )
+```
+
+### Keyed Lists
+
+```typescript
+const { div, keyed, Class } = html<Message>()
+
+const items: ReadonlyArray<Item> = [...]
+
+const itemsList = div(
+  [Class('list')],
+  Array.map(items, item =>
+    keyed('div')(
+      item.id,
+      [Class('item')],
+      [item.content]
+    )
+  )
+)
+```
+
+### Event Handlers with Data
+
+```typescript
+const ItemClicked = m('ItemClicked', { id: S.String })
+
+const { div, OnClick } = html<Message>()
+
+const item = (id: string): Html =>
+  div(
+    [OnClick(ItemClicked({ id }))],
+    ['Click me']
+  )
+```
+
+### Keyboard Events
+
+```typescript
+const KeyPressed = m('KeyPressed', {
+  key: S.String,
+  shiftKey: S.Boolean
+})
+
+const { input, OnKeyDown } = html<Message>()
+
+const field = input([
+  OnKeyDown((key, modifiers) =>
+    KeyPressed({ key, shiftKey: modifiers.shiftKey })
+  )
+])
+```
+
+### Conditional Event Handling
+
+```typescript
+const { input, OnKeyDownPreventDefault } = html<Message>()
+
+const field = input([
+  OnKeyDownPreventDefault((key) =>
+    key === 'Enter'
+      ? Option.some(SubmitForm())
+      : Option.none()
+  )
+])
+```

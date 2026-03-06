@@ -1,0 +1,335 @@
+---
+title: Subscriptions
+description: Stream commands continuously based on model state using reactive subscriptions
+---
+
+Subscriptions are long-running streams of commands that react to model changes. Unlike commands returned from update (which run once), subscriptions run continuously and restart when their dependencies change.
+
+## When to Use Subscriptions
+
+Use subscriptions for:
+
+- **Timers and intervals** — Ticking clocks, countdowns, animations
+- **WebSocket connections** — Real-time data streams
+- **Browser events** — Window resize, mouse position, keyboard listeners
+- **Polling** — Periodic API checks
+
+Don't use subscriptions for one-time operations — use commands instead.
+
+## Basic Subscription
+
+Subscriptions are defined using `makeSubscriptions`:
+
+```typescript packages/examples/stopwatch/src/main.ts
+import { Duration, Effect, Schema as S, Stream } from 'effect'
+import { Subscription } from 'foldkit'
+import { Command } from 'foldkit/command'
+
+const TICK_INTERVAL_MS = 10
+
+const SubscriptionDeps = S.Struct({
+  tick: S.Struct({
+    isRunning: S.Boolean,
+  }),
+})
+
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message
+>({
+  tick: {
+    modelToDependencies: (model: Model) => ({ isRunning: model.isRunning }),
+    depsToStream: ({ isRunning }) =>
+      Stream.when(
+        Stream.tick(Duration.millis(TICK_INTERVAL_MS)).pipe(
+          Stream.map(() => Effect.succeed(RequestedTick())),
+        ),
+        () => isRunning,
+      ),
+  },
+})
+```
+
+This subscription:
+
+1. **Extracts dependencies** — `modelToDependencies` pulls `isRunning` from the model
+2. **Compares dependencies** — Runtime compares new deps to previous using Schema equivalence
+3. **Restarts stream on change** — When `isRunning` changes, the old stream stops and a new one starts
+4. **Emits commands** — The stream produces commands that return messages
+
+## Subscription Lifecycle
+
+<Steps>
+
+### Initial Model
+
+Runtime calls `modelToDependencies(initialModel)` to get the first deps value.
+
+### Stream Starts
+
+Runtime calls `depsToStream(deps)` and begins consuming the stream.
+
+### Model Updates
+
+Every time update returns a new model:
+1. Runtime calls `modelToDependencies(newModel)`
+2. Compares new deps to previous using `Schema.equivalence`
+3. If different, stops old stream and starts new one with new deps
+4. If same, old stream continues
+
+### Stream Emits
+
+Each stream element is a `Command<Message>`. The runtime executes it and dispatches the result.
+
+</Steps>
+
+## Real-World Example: Stopwatch
+
+The stopwatch uses a subscription to emit tick messages while running:
+
+```typescript packages/examples/stopwatch/src/main.ts
+import { Duration, Effect, Schema as S, Stream } from 'effect'
+import { Subscription } from 'foldkit'
+
+const Model = S.Struct({
+  elapsedMs: S.Number,
+  isRunning: S.Boolean,
+  startTime: S.Number,
+})
+
+const RequestedTick = m('RequestedTick')
+const GotTick = m('GotTick', { elapsedMs: S.Number })
+
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message
+>({
+  tick: {
+    modelToDependencies: (model: Model) => ({ isRunning: model.isRunning }),
+    depsToStream: ({ isRunning }) =>
+      Stream.when(
+        Stream.tick(Duration.millis(10)).pipe(
+          Stream.map(() => Effect.succeed(RequestedTick())),
+        ),
+        () => isRunning,
+      ),
+  },
+})
+```
+
+The flow:
+
+1. User clicks "Start" → `RequestedStart` message
+2. Update sets `isRunning: true`
+3. Subscription sees `isRunning` changed from `false` to `true`
+4. Stream starts emitting `RequestedTick()` every 10ms
+5. Update handles `RequestedTick`, returns command to get current time
+6. Command returns `GotTick` with elapsed time
+7. Update updates `elapsedMs` in model
+8. View renders new time
+
+When user clicks "Stop":
+
+1. Update sets `isRunning: false`
+2. Subscription sees change, stops the stream
+3. No more ticks until "Start" is clicked again
+
+## Multiple Subscriptions
+
+Subscriptions are a record keyed by dependency field:
+
+```typescript
+const SubscriptionDeps = S.Struct({
+  timer: S.Struct({ isRunning: S.Boolean }),
+  websocket: S.Struct({ connectionUrl: S.OptionFromSelf(S.String) }),
+  poller: S.Struct({ pollInterval: S.Number }),
+})
+
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message
+>({
+  timer: {
+    modelToDependencies: model => ({ isRunning: model.isRunning }),
+    depsToStream: ({ isRunning }) => /* ... */,
+  },
+  
+  websocket: {
+    modelToDependencies: model => ({ connectionUrl: model.wsUrl }),
+    depsToStream: ({ connectionUrl }) => /* ... */,
+  },
+  
+  poller: {
+    modelToDependencies: model => ({ pollInterval: model.pollMs }),
+    depsToStream: ({ pollInterval }) => /* ... */,
+  },
+})
+```
+
+Each subscription runs independently. A change in one subscription's deps doesn't affect the others.
+
+## Conditional Subscriptions
+
+Use `Stream.when` or `Stream.whenEffect` to conditionally run:
+
+```typescript
+import { Stream, Effect } from 'effect'
+
+depsToStream: ({ isActive }) =>
+  Stream.when(
+    Stream.tick(Duration.seconds(1)).pipe(
+      Stream.map(() => Effect.succeed(Polled())),
+    ),
+    () => isActive,
+  )
+```
+
+Or return an empty stream:
+
+```typescript
+import { Stream, Option } from 'effect'
+
+depsToStream: ({ maybeUrl }) =>
+  Option.match(maybeUrl, {
+    onNone: () => Stream.empty,
+    onSome: url => connectWebSocket(url),
+  })
+```
+
+## Subscription with Resources
+
+Subscriptions can access services from the `R` channel:
+
+```typescript
+import { Context, Effect, Stream } from 'effect'
+
+class WebSocketService extends Context.Tag('WebSocketService')<
+  WebSocketService,
+  { connect: (url: string) => Stream.Stream<string> }
+>() {}
+
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message,
+  WebSocketService
+>({
+  websocket: {
+    modelToDependencies: model => ({ url: model.wsUrl }),
+    depsToStream: ({ url }) =>
+      Stream.flatMap(
+        Effect.gen(function* () {
+          const ws = yield* WebSocketService
+          return ws.connect(url)
+        }),
+        message => Stream.succeed(Effect.succeed(ReceivedMessage({ message }))),
+      ),
+  },
+})
+```
+
+Provide the service via `resources` in `makeElement` or `makeApplication`.
+
+## Pass Subscriptions to Runtime
+
+Add subscriptions to the runtime config:
+
+```typescript packages/examples/stopwatch/src/main.ts
+import { Runtime } from 'foldkit'
+
+const element = Runtime.makeElement({
+  Model,
+  init,
+  update,
+  view,
+  subscriptions,
+  container: document.getElementById('root')!,
+})
+
+Runtime.run(element)
+```
+
+## Subscription vs Command
+
+<CardGroup cols={2}>
+  <Card title="Command" icon="terminal">
+    **One-time operation**
+    
+    - Runs once per update
+    - Fetch data, save to storage
+    - Navigate to new URL
+    - Generate random value
+  </Card>
+  
+  <Card title="Subscription" icon="arrows-rotate">
+    **Continuous stream**
+    
+    - Runs until dependencies change
+    - Timers, intervals, animations
+    - WebSocket connections
+    - Browser event listeners
+  </Card>
+</CardGroup>
+
+## Subscription Patterns
+
+### Ticker Subscription
+
+Emit messages at regular intervals:
+
+```typescript
+import { Duration, Effect, Stream } from 'effect'
+
+depsToStream: ({ intervalMs }) =>
+  Stream.tick(Duration.millis(intervalMs)).pipe(
+    Stream.map(() => Effect.succeed(Ticked())),
+  )
+```
+
+### WebSocket Subscription
+
+Connect to a WebSocket based on model state:
+
+```typescript
+import { Stream, Effect } from 'effect'
+
+depsToStream: ({ maybeUrl }) =>
+  pipe(
+    maybeUrl,
+    Option.match({
+      onNone: () => Stream.empty,
+      onSome: url =>
+        Stream.async<Command<Message>>(emit => {
+          const ws = new WebSocket(url)
+          ws.onmessage = e =>
+            emit.single(Effect.succeed(ReceivedMessage({ data: e.data })))
+          ws.onerror = e =>
+            emit.single(Effect.succeed(SocketError({ error: String(e) })))
+          return Effect.sync(() => ws.close())
+        }),
+    }),
+  )
+```
+
+### Polling Subscription
+
+Fetch data at intervals:
+
+```typescript
+import { Duration, Effect, Stream } from 'effect'
+
+depsToStream: ({ pollIntervalMs, endpoint }) =>
+  Stream.tick(Duration.millis(pollIntervalMs)).pipe(
+    Stream.flatMap(() => Stream.fromEffect(fetchData(endpoint))),
+  )
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Managed Resources" icon="plug" href="/concepts/managed-resources">
+    Acquire resources with acquire/release lifecycle
+  </Card>
+  <Card title="Commands" icon="terminal" href="/concepts/commands">
+    Execute one-time side effects
+  </Card>
+</CardGroup>

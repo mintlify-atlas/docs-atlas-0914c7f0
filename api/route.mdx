@@ -1,0 +1,450 @@
+---
+title: Route
+description: Bidirectional route parsing and URL building with type-safe parser combinators
+---
+
+The `Route` module provides a powerful system for defining routes using parser combinators. Routes are **bidirectional** — they can both parse URLs into typed route values and build URLs from route data.
+
+## Import
+
+```typescript
+import { Route } from 'foldkit'
+import { Schema as S } from 'effect'
+```
+
+## Core Concepts
+
+### Bidirectional Parsing
+
+Foldkit routes work in both directions:
+
+- **Parse**: Convert URL strings into typed route values
+- **Print**: Generate URL strings from route data
+
+This ensures your route definitions stay synchronized with your URL structure.
+
+### Parser Combinators
+
+Routes are built by composing small, focused parsers using `slash()`. Each parser handles one URL segment or pattern.
+
+## Basic Example
+
+```typescript
+import { Route } from 'foldkit'
+import { Schema as S, pipe } from 'effect'
+
+// Define route schemas
+const Home = Route.r('Home')
+const UserProfile = Route.r('UserProfile', { id: S.String })
+const BlogPost = Route.r('BlogPost', { postId: S.Number })
+
+// Build route parsers
+const homeRouter = pipe(
+  Route.root,
+  Route.mapTo(Home)
+)
+
+const userRouter = pipe(
+  Route.literal('users'),
+  Route.slash(Route.string('id')),
+  Route.mapTo(UserProfile)
+)
+
+const blogRouter = pipe(
+  Route.literal('blog'),
+  Route.slash(Route.int('postId')),
+  Route.mapTo(BlogPost)
+)
+
+// Combine routes
+const parser = Route.oneOf(
+  homeRouter,
+  userRouter,
+  blogRouter
+)
+
+// Parse URLs
+const route = Route.parseUrlWithFallback(parser, NotFound)(url)
+// route: Home | UserProfile | BlogPost | NotFound
+
+// Build URLs
+userRouter.build({ id: 'jane' })
+// => '/users/jane'
+```
+
+## API Reference
+
+### Route Schema Helper
+
+<ParamField path="r" type="function">
+  Creates a callable route schema. This is a convenience wrapper around Effect's `Schema.TaggedStruct` that allows you to call the constructor directly.
+
+  **Signature:**
+  ```typescript
+  function r<Tag extends string>(tag: Tag): CallableTaggedStruct<Tag, {}>
+  function r<Tag extends string, Fields extends S.Struct.Fields>(
+    tag: Tag,
+    fields: Fields
+  ): CallableTaggedStruct<Tag, Fields>
+  ```
+
+  **Example:**
+  ```typescript
+  const Home = Route.r('Home')
+  Home() // { _tag: 'Home' }
+
+  const UserProfile = Route.r('UserProfile', { id: S.String })
+  UserProfile({ id: 'abc' }) // { _tag: 'UserProfile', id: 'abc' }
+  ```
+</ParamField>
+
+### Parser Combinators
+
+<ParamField path="literal" type="function">
+  Creates a parser that matches an exact URL path segment.
+
+  **Parameters:**
+  - `segment` (string): The exact segment to match
+
+  **Returns:** `Biparser<{}>`
+
+  **Example:**
+  ```typescript
+  Route.literal('users') // matches /users
+  Route.literal('blog')  // matches /blog
+  ```
+</ParamField>
+
+<ParamField path="param" type="function">
+  Creates a parser for a dynamic URL segment with custom parse and print functions.
+
+  **Parameters:**
+  - `label` (string): A descriptive name used in error messages
+  - `parse` (function): Converts a raw URL segment string into the parsed value
+  - `print` (function): Converts the parsed value back into a URL segment string
+
+  **Returns:** `Biparser<A>`
+
+  **Example:**
+  ```typescript
+  const uuid = Route.param(
+    'uuid',
+    (segment) => {
+      if (isValidUUID(segment)) {
+        return Effect.succeed(segment)
+      }
+      return Effect.fail(
+        new Route.ParseError({ message: 'Invalid UUID' })
+      )
+    },
+    (value) => value
+  )
+  ```
+</ParamField>
+
+<ParamField path="string" type="function">
+  Creates a parser that captures a URL segment as a named string field.
+
+  **Parameters:**
+  - `name` (string): The field name for the captured value
+
+  **Returns:** `Biparser<Record<K, string>>`
+
+  **Example:**
+  ```typescript
+  Route.string('slug') // parses /hello into { slug: "hello" }
+  Route.string('id')   // parses /abc123 into { id: "abc123" }
+  ```
+</ParamField>
+
+<ParamField path="int" type="function">
+  Creates a parser that captures a URL segment as a named integer field. Fails if the segment is not a valid integer.
+
+  **Parameters:**
+  - `name` (string): The field name for the captured value
+
+  **Returns:** `Biparser<Record<K, number>>`
+
+  **Example:**
+  ```typescript
+  Route.int('id')    // parses /42 into { id: 42 }
+  Route.int('page')  // parses /5 into { page: 5 }
+  // Rejects /3.5, /abc, etc.
+  ```
+</ParamField>
+
+<ParamField path="root" type="Biparser<{}>">
+  A parser that matches the root path with no remaining segments. Succeeds only when the URL path is exactly `/`.
+
+  **Example:**
+  ```typescript
+  pipe(
+    Route.root,
+    Route.mapTo(Home)
+  )
+  ```
+</ParamField>
+
+### Composition
+
+<ParamField path="slash" type="function">
+  Composes two `Biparser`s sequentially, combining their parsed values. Cannot be used after `query` since query parameters are terminal.
+
+  **Parameters:**
+  - `parserB` (Biparser): The second parser to apply
+
+  **Returns:** A function that takes `parserA` and returns `Biparser<A & B>`
+
+  **Example:**
+  ```typescript
+  pipe(
+    Route.literal('users'),
+    Route.slash(Route.string('id'))
+  ) // matches /users/abc
+
+  pipe(
+    Route.literal('posts'),
+    Route.slash(Route.string('postId')),
+    Route.slash(Route.int('commentId'))
+  ) // matches /posts/my-post/5
+  ```
+</ParamField>
+
+<ParamField path="query" type="function">
+  Adds query parameter parsing to a `Biparser` using an Effect `Schema`. Produces a `TerminalParser` that cannot be extended with `slash`, since query parameters must appear at the end of a route definition.
+
+  **Parameters:**
+  - `schema` (Schema): An Effect Schema describing the expected query parameters
+
+  **Returns:** A function that takes a parser and returns `TerminalParser<A & QueryParams>`
+
+  **Example:**
+  ```typescript
+  pipe(
+    Route.literal('search'),
+    Route.query(S.Struct({ q: S.String, page: S.NumberFromString })),
+    Route.mapTo(SearchRoute)
+  )
+  // Parses /search?q=hello&page=2
+  // => { _tag: 'SearchRoute', q: 'hello', page: 2 }
+
+  pipe(
+    Route.literal('shop'),
+    Route.slash(Route.string('category')),
+    Route.query(S.Struct({ sort: S.String })),
+    Route.mapTo(ShopRoute)
+  )
+  // Parses /shop/electronics?sort=price
+  // => { _tag: 'ShopRoute', category: 'electronics', sort: 'price' }
+  ```
+</ParamField>
+
+<ParamField path="oneOf" type="function">
+  Combines multiple parsers, trying each in order until one succeeds. Returns a `Parser` (parse-only) since the union of different route shapes cannot provide a single unified print function.
+
+  **Parameters:**
+  - `...parsers` (Biparser | Parser): Up to 10 parsers to try
+
+  **Returns:** `Parser<A | B | C | ...>`
+
+  **Example:**
+  ```typescript
+  const parser = Route.oneOf(
+    homeRouter,
+    userRouter,
+    blogRouter,
+    searchRouter
+  )
+  // Tries each router in order until one matches
+  ```
+</ParamField>
+
+<ParamField path="mapTo" type="function">
+  Converts a `Biparser` into a `Router` by mapping parsed values to a tagged type constructor. The resulting `Router` can both parse URLs into tagged route values and build URLs from route payloads.
+
+  **Parameters:**
+  - `appRouteConstructor` (object): A route schema with a `make` method
+
+  **Returns:** A function that takes a parser and returns `Router<T>`
+
+  **Example:**
+  ```typescript
+  const UserProfile = Route.r('UserProfile', { id: S.String })
+
+  const router = pipe(
+    Route.literal('users'),
+    Route.slash(Route.string('id')),
+    Route.mapTo(UserProfile)
+  )
+
+  // Parse: /users/abc => { _tag: 'UserProfile', id: 'abc' }
+  // Build: router.build({ id: 'abc' }) => '/users/abc'
+  ```
+</ParamField>
+
+### URL Parsing
+
+<ParamField path="parseUrlWithFallback" type="function">
+  Parses a URL against a parser, falling back to a not-found route if no parser matches.
+
+  **Parameters:**
+  - `parser` (Parser): The parser (typically from `oneOf`) to attempt
+  - `notFoundRouteConstructor` (object): Constructor called with `{ path }` when no route matches
+
+  **Returns:** A function that takes a `Url` and returns `A | B`
+
+  **Example:**
+  ```typescript
+  const NotFound = Route.r('NotFound', { path: S.String })
+
+  const parser = Route.oneOf(
+    homeRouter,
+    userRouter,
+    blogRouter
+  )
+
+  const parseRoute = Route.parseUrlWithFallback(parser, NotFound)
+
+  parseRoute(url)
+  // => Home | UserProfile | BlogPost | NotFound
+  ```
+</ParamField>
+
+## Types
+
+<ParamField path="Biparser<A>" type="type">
+  A bidirectional parser that can both parse URL segments into a value and print a value back to URL segments.
+
+  **Properties:**
+  - `parse`: `(segments: ReadonlyArray<string>, search?: string) => Effect<ParseResult<A>, ParseError>`
+  - `print`: `(value: A, state: PrintState) => Effect<PrintState, ParseError>`
+</ParamField>
+
+<ParamField path="Router<A>" type="type">
+  A parser with a `build` method that can reconstruct URLs from parsed values. Created by applying `mapTo` to a `Biparser`.
+
+  **Properties:**
+  - `parse`: `(segments: ReadonlyArray<string>, search?: string) => Effect<ParseResult<A>, ParseError>`
+  - `build`: `(value: Omit<A, '_tag'>) => string`
+</ParamField>
+
+<ParamField path="Parser<A>" type="type">
+  A parse-only parser with no print/build capabilities. Returned by `oneOf`, which combines multiple parsers whose print types may differ.
+
+  **Properties:**
+  - `parse`: `(segments: ReadonlyArray<string>, search?: string) => Effect<ParseResult<A>, ParseError>`
+</ParamField>
+
+<ParamField path="TerminalParser<A>" type="type">
+  A `Biparser` that has been terminated (e.g. by `query`) and cannot be extended with `slash`.
+</ParamField>
+
+<ParamField path="ParseResult<A>" type="type">
+  The result of parsing: a tuple of the parsed value and remaining URL segments.
+
+  ```typescript
+  type ParseResult<A> = [A, ReadonlyArray<string>]
+  ```
+</ParamField>
+
+<ParamField path="ParseError" type="class">
+  Error type for route parsing failures. Includes optional `expected`, `actual`, and `position` fields for diagnostic context when a URL segment does not match.
+
+  **Fields:**
+  - `message` (string): Error description
+  - `expected` (string, optional): What was expected
+  - `actual` (string, optional): What was found
+  - `position` (number, optional): Position in the URL path
+</ParamField>
+
+## Advanced Patterns
+
+### Nested Routes
+
+```typescript
+const AdminRoute = Route.r('Admin', {
+  section: S.Literal('users', 'settings', 'logs')
+})
+
+const adminRouter = pipe(
+  Route.literal('admin'),
+  Route.slash(Route.string('section')),
+  Route.mapTo(AdminRoute)
+)
+// Matches /admin/users, /admin/settings, /admin/logs
+```
+
+### Complex Query Parameters
+
+```typescript
+const SearchRoute = Route.r('Search', {
+  q: S.String,
+  page: S.Number,
+  filters: S.Array(S.String)
+})
+
+const searchRouter = pipe(
+  Route.literal('search'),
+  Route.query(S.Struct({
+    q: S.String,
+    page: S.NumberFromString,
+    filters: S.Array(S.String)
+  })),
+  Route.mapTo(SearchRoute)
+)
+// Parses /search?q=laptop&page=2&filters=new&filters=sale
+```
+
+### Custom Validators
+
+```typescript
+const slugParser = Route.param(
+  'slug',
+  (segment) => {
+    // Only allow lowercase letters, numbers, and hyphens
+    if (/^[a-z0-9-]+$/.test(segment)) {
+      return Effect.succeed(segment)
+    }
+    return Effect.fail(
+      new Route.ParseError({
+        message: 'Invalid slug format',
+        expected: 'lowercase letters, numbers, and hyphens',
+        actual: segment
+      })
+    )
+  },
+  (value) => value
+)
+
+const articleRouter = pipe(
+  Route.literal('articles'),
+  Route.slash(slugParser),
+  Route.mapTo(ArticleRoute)
+)
+```
+
+### Round-Trip Verification
+
+Routers created with `mapTo` support bidirectional operations:
+
+```typescript
+const PostRoute = Route.r('Post', {
+  userId: S.String,
+  postId: S.Number
+})
+
+const router = pipe(
+  Route.literal('users'),
+  Route.slash(Route.string('userId')),
+  Route.slash(Route.int('postId')),
+  Route.mapTo(PostRoute)
+)
+
+// Build URL from data
+const url = router.build({ userId: 'jane', postId: 7 })
+// => '/users/jane/7'
+
+// Parse URL back to data
+const parsed = router.parse(['users', 'jane', '7'])
+// => { _tag: 'Post', userId: 'jane', postId: 7 }
+```

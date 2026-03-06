@@ -1,0 +1,198 @@
+---
+title: Weather
+description: Fetch and display weather data using HTTP commands
+---
+
+The Weather example demonstrates how to make HTTP requests in Foldkit using Effect's HTTP client and handle async results with proper loading and error states.
+
+## What You'll Learn
+
+- Making HTTP requests with `@effect/platform`
+- Handling async states (Init, Loading, Success, Failure)
+- Form submission and input handling
+- Working with external APIs
+- Decoding API responses
+
+## Live Demo
+
+<Card title="Weather Demo" icon="play" href="https://foldkit.dev/examples/weather">
+  Click to see the live weather example
+</Card>
+
+## Key Features
+
+- ZIP code-based weather lookup
+- Loading states with visual feedback
+- Error handling for invalid locations
+- Detailed weather information display
+- Integration with wttr.in API
+
+## Async State Management
+
+The weather data uses a discriminated union to represent all possible states:
+
+```typescript
+const WeatherInit = ts('WeatherInit')
+const WeatherLoading = ts('WeatherLoading')
+const WeatherSuccess = ts('WeatherSuccess', { data: WeatherData })
+const WeatherFailure = ts('WeatherFailure', { error: S.String })
+
+const WeatherAsyncResult = S.Union(
+  WeatherInit,
+  WeatherLoading,
+  WeatherSuccess,
+  WeatherFailure,
+)
+```
+
+This makes it impossible to have invalid state combinations like "loading with data" or "error without message".
+
+## Model Structure
+
+```typescript
+export const Model = S.Struct({
+  zipCodeInput: S.String,
+  weather: WeatherAsyncResult,
+})
+```
+
+## Making HTTP Requests
+
+The weather fetch command uses Effect's HTTP client:
+
+```typescript
+export const fetchWeather = (
+  zipCode: string,
+): Command<
+  typeof SucceededWeatherFetch | typeof FailedWeatherFetch,
+  never,
+  HttpClient.HttpClient
+> =>
+  Effect.gen(function* () {
+    if (String.isEmpty(zipCode.trim())) {
+      return FailedWeatherFetch({ error: 'Zip code required' })
+    }
+
+    const client = yield* HttpClient.HttpClient
+    const response = yield* client.get(
+      `https://wttr.in/${encodeURIComponent(zipCode)},US?format=j1`,
+    )
+
+    if (response.status !== 200) {
+      return FailedWeatherFetch({ error: 'Location not found' })
+    }
+
+    const data = (yield* response.json) as WeatherResponseData
+    const currentCondition = data.current_condition[0]
+    const areaName = data.nearest_area[0].areaName[0].value
+    const region = data.nearest_area[0].region[0].value
+
+    const weather = WeatherData.make({
+      zipCode,
+      temperature: parseInt(currentCondition.temp_F),
+      description: currentCondition.weatherDesc[0].value,
+      humidity: parseInt(currentCondition.humidity),
+      windSpeed: parseFloat(currentCondition.windspeedKmph),
+      areaName,
+      region,
+    })
+
+    return SucceededWeatherFetch({ weather })
+  }).pipe(
+    Effect.scoped,
+    Effect.catchAll(() =>
+      Effect.succeed(
+        FailedWeatherFetch({ error: 'Failed to fetch weather data' }),
+      ),
+    ),
+  )
+
+const fetchWeatherLive = flow(
+  fetchWeather,
+  Effect.locally(HttpClient.currentTracerPropagation, false),
+  Effect.provide(FetchHttpClient.layer),
+)
+```
+
+## Update Logic
+
+When the form is submitted, the model transitions to loading and issues the command:
+
+```typescript
+SubmittedWeatherForm: () => [
+  evo(model, {
+    weather: () => WeatherLoading(),
+  }),
+  [fetchWeatherLive(model.zipCodeInput)],
+]
+```
+
+When results come back, the model updates accordingly:
+
+```typescript
+SucceededWeatherFetch: ({ weather }) => [
+  evo(model, {
+    weather: () => WeatherSuccess({ data: weather }),
+  }),
+  [],
+]
+
+FailedWeatherFetch: ({ error }) => [
+  evo(model, {
+    weather: () => WeatherFailure({ error }),
+  }),
+  [],
+]
+```
+
+## View Rendering
+
+The view matches on the async state to show the appropriate UI:
+
+```typescript
+M.value(model.weather).pipe(
+  M.tagsExhaustive({
+    WeatherInit: () => empty,
+    WeatherLoading: () =>
+      div(
+        [Class('text-blue-600 font-semibold')],
+        ['Fetching weather...'],
+      ),
+    WeatherFailure: ({ error }) =>
+      div(
+        [
+          Class(
+            'p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg',
+          ),
+        ],
+        [error],
+      ),
+    WeatherSuccess: ({ data: weather }) => weatherView(weather),
+  }),
+)
+```
+
+## Complete Example
+
+<Card title="weather/src/main.ts" icon="github" href="https://github.com/foldkit/foldkit/tree/main/examples/weather/src/main.ts">
+  View the complete source code on GitHub
+</Card>
+
+## Testing
+
+The weather example includes tests showing how to test commands:
+
+<Card title="weather/src/main.test.ts" icon="github" href="https://github.com/foldkit/foldkit/tree/main/examples/weather/src/main.test.ts">
+  View the tests on GitHub
+</Card>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Form" icon="input" href="/examples/form">
+    Learn about form validation with async checks
+  </Card>
+  <Card title="Todo" icon="check" href="/examples/todo">
+    Build an app with local storage persistence
+  </Card>
+</CardGroup>

@@ -1,0 +1,357 @@
+---
+title: WebSocket Chat
+description: Real-time chat application with WebSocket connections and managed resources
+---
+
+The WebSocket Chat example demonstrates how to manage persistent connections using Foldkit's Managed Resources feature and handle real-time bidirectional communication.
+
+## What You'll Learn
+
+- Managing WebSocket connections as resources
+- Handling connection lifecycle (connect, disconnect, reconnect)
+- WebSocket subscriptions for incoming messages
+- Sending messages over WebSockets
+- Error handling and connection states
+- Resource acquisition and cleanup
+
+## Live Demo
+
+<Card title="WebSocket Chat Demo" icon="play" href="https://foldkit.dev/examples/websocket-chat">
+  Click to try the live chat example (connects to echo server)
+</Card>
+
+## Key Features
+
+- 🔌 Connect/disconnect controls
+- 💬 Send and receive messages
+- 📡 Real-time message delivery
+- ⏰ Timestamp for each message
+- 🔄 Automatic reconnection support
+- ⚠️ Connection error handling
+- 🎨 Sent vs received message styling
+
+## Connection States
+
+The connection is modeled as a discriminated union:
+
+```typescript
+const ConnectionDisconnected = ts('ConnectionDisconnected')
+const ConnectionConnecting = ts('ConnectionConnecting')
+const ConnectionConnected = ts('ConnectionConnected')
+const ConnectionError = ts('ConnectionError', { error: S.String })
+
+const ConnectionState = S.Union(
+  ConnectionDisconnected,
+  ConnectionConnecting,
+  ConnectionConnected,
+  ConnectionError,
+)
+```
+
+## Model
+
+```typescript
+const ChatMessage = S.Struct({
+  text: S.String,
+  zoned: S.DateTimeZonedFromSelf,
+  isSent: S.Boolean,
+})
+
+const Model = S.Struct({
+  connection: ConnectionState,
+  messages: S.Array(ChatMessage),
+  messageInput: S.String,
+})
+```
+
+## Managed Resources
+
+Managed Resources handle the lifecycle of external resources like WebSocket connections:
+
+### Defining the Resource
+
+```typescript
+const ChatSocket = ManagedResource.tag<WebSocket>()('ChatSocket')
+type ChatSocketService = ManagedResource.ServiceOf<typeof ChatSocket>
+```
+
+### Resource Configuration
+
+```typescript
+const managedResources = ManagedResource.makeManagedResources(
+  ManagedResourceDeps,
+)<Model, Message>({
+  chatSocket: {
+    resource: ChatSocket,
+    modelToMaybeRequirements: model =>
+      M.value(model.connection).pipe(
+        M.tag('ConnectionConnecting', () => Option.some(null)),
+        M.tag('ConnectionConnected', () => Option.some(null)),
+        M.orElse(() => Option.none()),
+      ),
+    acquire: () =>
+      Effect.async<WebSocket, Error>(resume => {
+        const ws = new WebSocket(WS_URL)
+
+        const handleOpen = () => {
+          ws.removeEventListener('error', handleError)
+          resume(Effect.succeed(ws))
+        }
+
+        const handleError = () => {
+          ws.removeEventListener('open', handleOpen)
+          resume(Effect.fail(new Error('Failed to connect to WebSocket')))
+        }
+
+        ws.addEventListener('open', handleOpen)
+        ws.addEventListener('error', handleError)
+
+        return Effect.sync(() => {
+          ws.removeEventListener('open', handleOpen)
+          ws.removeEventListener('error', handleError)
+        })
+      }).pipe(
+        Effect.timeoutFail({
+          duration: Duration.millis(CONNECTION_TIMEOUT_MS),
+          onTimeout: () => new Error('Connection timeout'),
+        }),
+      ),
+    release: socket =>
+      Effect.sync(() => {
+        socket.close()
+      }),
+    onAcquired: () => Connected(),
+    onReleased: () => Disconnected(),
+    onAcquireError: error =>
+      FailedConnection({
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }),
+  },
+})
+```
+
+The resource:
+- **Acquires** when `connection` is `ConnectionConnecting` or `ConnectionConnected`
+- **Releases** when connection state changes to disconnected
+- Sends messages on acquisition/release/error
+
+## WebSocket Subscription
+
+Subscribe to incoming WebSocket messages:
+
+```typescript
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message,
+  ChatSocketService
+>({
+  isConnected: {
+    modelToDependencies: model =>
+      model.connection._tag === 'ConnectionConnected',
+    depsToStream: isConnected => {
+      if (!isConnected) {
+        return Stream.empty
+      }
+
+      return Stream.unwrap(
+        ChatSocket.get.pipe(
+          Effect.map(socket =>
+            Stream.async<Command<Message>>(emit => {
+              const handleMessage = (event: MessageEvent) => {
+                emit.single(
+                  Effect.succeed(ReceivedMessage({ text: event.data })),
+                )
+              }
+
+              const handleClose = () => {
+                emit.single(Effect.succeed(Disconnected()))
+                emit.end()
+              }
+
+              const handleError = () => {
+                emit.single(
+                  Effect.succeed(
+                    FailedConnection({ error: 'Connection error' }),
+                  ),
+                )
+                emit.end()
+              }
+
+              socket.addEventListener('message', handleMessage)
+              socket.addEventListener('close', handleClose)
+              socket.addEventListener('error', handleError)
+
+              return Effect.sync(() => {
+                socket.removeEventListener('message', handleMessage)
+                socket.removeEventListener('close', handleClose)
+                socket.removeEventListener('error', handleError)
+              })
+            }),
+          ),
+          Effect.catchTag('ResourceNotAvailable', () =>
+            Effect.succeed(Stream.empty),
+          ),
+        ),
+      )
+    },
+  },
+})
+```
+
+## Sending Messages
+
+To send a message, access the managed resource:
+
+```typescript
+const sendMessage = (
+  text: string,
+): Command<typeof SentMessage | typeof FailedConnection, never, ChatSocketService> =>
+  ChatSocket.get.pipe(
+    Effect.flatMap(socket =>
+      Effect.sync(() => {
+        socket.send(text)
+        return SentMessage({ text })
+      }),
+    ),
+    Effect.catchTag('ResourceNotAvailable', () =>
+      Effect.succeed(FailedConnection({ error: 'Socket unavailable' })),
+    ),
+  )
+```
+
+In the update function:
+
+```typescript
+RequestedMessageSend: () => {
+  const trimmedMessage = model.messageInput.trim()
+
+  if (String.isEmpty(trimmedMessage)) {
+    return [model, []]
+  }
+
+  return M.value(model.connection).pipe(
+    M.tag('ConnectionConnected', () => [
+      evo(model, {
+        messageInput: () => '',
+      }),
+      [sendMessage(trimmedMessage)],
+    ]),
+    M.orElse(() => [model, []]),
+  )
+}
+```
+
+## Adding Timestamps
+
+When messages are sent or received, fetch the current time:
+
+```typescript
+SentMessage: ({ text }) => [
+  model,
+  [
+    Task.getZonedTime.pipe(
+      Effect.map(zoned => GotSentMessageTime({ text, zoned })),
+    ),
+  ],
+]
+
+GotSentMessageTime: ({ text, zoned }) => {
+  const newMessage = ChatMessage.make({
+    text,
+    zoned,
+    isSent: true,
+  })
+
+  return [
+    evo(model, {
+      messages: messages => [...messages, newMessage],
+    }),
+    [],
+  ]
+}
+```
+
+## Connection Lifecycle
+
+### Connecting
+
+```typescript
+RequestedConnection: () => [
+  evo(model, {
+    connection: () => ConnectionConnecting(),
+  }),
+  [],
+]
+```
+
+Changing to `ConnectionConnecting` triggers resource acquisition.
+
+### Connected
+
+```typescript
+Connected: () => [
+  evo(model, {
+    connection: () => ConnectionConnected(),
+  }),
+  [],
+]
+```
+
+This message is sent by the `onAcquired` callback.
+
+### Disconnected
+
+```typescript
+Disconnected: () => [
+  evo(model, {
+    connection: () => ConnectionDisconnected(),
+    messages: () => [],
+  }),
+  [],
+]
+```
+
+Messages are cleared on disconnect.
+
+### Error Handling
+
+```typescript
+FailedConnection: ({ error }) => [
+  evo(model, {
+    connection: () => ConnectionError({ error }),
+  }),
+  [],
+]
+```
+
+## View States
+
+The view adapts based on connection state:
+
+```typescript
+M.value(model.connection).pipe(
+  M.tagsExhaustive({
+    ConnectionDisconnected: connectButtonView,
+    ConnectionConnecting: connectingView,
+    ConnectionConnected: () => messageInputView(model.messageInput),
+    ConnectionError: ({ error }) => errorView(error),
+  }),
+)
+```
+
+## Complete Source Code
+
+<Card title="websocket-chat/src/main.ts" icon="github" href="https://github.com/foldkit/foldkit/tree/main/examples/websocket-chat/src/main.ts">
+  View the complete source code on GitHub (628 lines)
+</Card>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Snake" icon="gamepad" href="/examples/snake">
+    Learn about game loops and keyboard subscriptions
+  </Card>
+  <Card title="Weather" icon="cloud" href="/examples/weather">
+    Make HTTP requests with Effect's HTTP client
+  </Card>
+</CardGroup>

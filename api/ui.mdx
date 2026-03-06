@@ -1,0 +1,812 @@
+---
+title: UI Components
+description: Headless UI components with accessibility, keyboard navigation, and animation support
+---
+
+Foldkit provides a collection of headless UI components that handle state management, keyboard navigation, ARIA attributes, and animations. All components follow the Model-View-Update pattern and integrate with the Foldkit runtime.
+
+## Component Overview
+
+- [Dialog](#dialog) — Modal dialog with native `<dialog>` element
+- [Menu](#menu) — Dropdown menu with typeahead search
+- [Tabs](#tabs) — Tab group with automatic or manual activation
+- [Listbox](#listbox) — Single or multi-select listbox
+- [Combobox](#combobox) — Autocomplete input with dropdown
+- [Popover](#popover) — Floating panel with trigger button
+- [Switch](#switch) — Toggle switch with accessible attributes
+- [Disclosure](#disclosure) — Expandable content section
+
+## Shared Patterns
+
+All UI components share common patterns:
+
+### Initialization
+
+Every component exports an `init` function that creates the initial model:
+
+```typescript
+import * as Dialog from 'foldkit/ui'
+
+const dialogModel = Dialog.init({ id: 'my-dialog' })
+```
+
+### Update Function
+
+The `update` function processes messages and returns `[model, commands]`:
+
+```typescript
+const [nextModel, commands] = Dialog.update(model, message)
+```
+
+### View Function
+
+The `view` function renders the component as `Html`:
+
+```typescript
+const element = Dialog.view({
+  model,
+  toMessage: identity,
+  // ... component-specific config
+})
+```
+
+### Lazy View
+
+The `lazy` function creates a memoized view:
+
+```typescript
+const renderDialog = Dialog.lazy({
+  panelContent,
+  panelClassName: 'dialog-panel',
+  backdropClassName: 'dialog-backdrop'
+})
+
+const element = renderDialog(model, identity)
+```
+
+## Dialog
+
+Modal dialog component backed by the native `<dialog>` element with `showModal()`.
+
+### Model
+
+```typescript
+type Model = {
+  id: string
+  isOpen: boolean
+}
+```
+
+### Messages
+
+<ParamField path="Opened" type="Message">
+  Opens the dialog. Triggers the `showModal()` command.
+</ParamField>
+
+<ParamField path="Closed" type="Message">
+  Closes the dialog via Escape key, backdrop click, or programmatically. Triggers the `closeModal()` command.
+</ParamField>
+
+<ParamField path="NoOp" type="Message">
+  Placeholder for command completion.
+</ParamField>
+
+### init
+
+```typescript
+const model = Dialog.init({
+  id: 'dialog-1',
+  isOpen: false
+})
+```
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the dialog.
+</ParamField>
+
+<ParamField path="isOpen" type="boolean" default="false">
+  Initial open state.
+</ParamField>
+
+### view
+
+```typescript
+Dialog.view({
+  model,
+  toMessage: identity,
+  panelContent,
+  panelClassName: 'dialog-panel',
+  backdropClassName: 'dialog-backdrop',
+  className: 'dialog-wrapper'
+})
+```
+
+<ParamField path="model" type="Model" required>
+  Dialog model.
+</ParamField>
+
+<ParamField path="toMessage" type="(message: Closed | NoOp) => Message" required>
+  Message mapper.
+</ParamField>
+
+<ParamField path="panelContent" type="Html" required>
+  Content for the dialog panel.
+</ParamField>
+
+<ParamField path="panelClassName" type="string" required>
+  CSS class for the panel.
+</ParamField>
+
+<ParamField path="backdropClassName" type="string" required>
+  CSS class for the backdrop.
+</ParamField>
+
+<ParamField path="className" type="string">
+  CSS class for the dialog element.
+</ParamField>
+
+### Helpers
+
+<ParamField path="titleId" type="(model: Model) => string">
+  Returns the ID for `aria-labelledby`. Apply this to your title element.
+</ParamField>
+
+<ParamField path="descriptionId" type="(model: Model) => string">
+  Returns the ID for `aria-describedby`. Apply this to your description element.
+</ParamField>
+
+## Menu
+
+Dropdown menu with typeahead search, keyboard navigation, and drag-to-select support.
+
+### Model
+
+```typescript
+type Model = {
+  id: string
+  isOpen: boolean
+  isAnimated: boolean
+  isModal: boolean
+  transitionState: TransitionState
+  maybeActiveItemIndex: Option<number>
+  activationTrigger: 'Pointer' | 'Keyboard'
+  searchQuery: string
+  searchVersion: number
+  maybeLastPointerPosition: Option<{ screenX: number; screenY: number }>
+  maybeLastButtonPointerType: Option<string>
+  maybePointerOrigin: Option<{ screenX: number; screenY: number; timeStamp: number }>
+}
+```
+
+### Messages
+
+<ParamField path="Opened" type="{ maybeActiveItemIndex: Option<number> }">
+  Opens menu. `None` for pointer, `Some` for keyboard.
+</ParamField>
+
+<ParamField path="Closed" type="Message">
+  Closes menu via Escape or backdrop click.
+</ParamField>
+
+<ParamField path="ClosedByTab" type="Message">
+  Closes menu via Tab key.
+</ParamField>
+
+<ParamField path="ActivatedItem" type="{ index: number; activationTrigger: ActivationTrigger }">
+  Highlights an item via arrow keys or hover.
+</ParamField>
+
+<ParamField path="DeactivatedItem" type="Message">
+  Mouse leaves an enabled item.
+</ParamField>
+
+<ParamField path="SelectedItem" type="{ index: number }">
+  Item selected via Enter, Space, or click.
+</ParamField>
+
+<ParamField path="MovedPointerOverItem" type="{ index: number; screenX: number; screenY: number }">
+  Pointer moves over item.
+</ParamField>
+
+<ParamField path="Searched" type="{ key: string; maybeTargetIndex: Option<number> }">
+  Printable character typed for typeahead.
+</ParamField>
+
+<ParamField path="ClearedSearch" type="{ version: number }">
+  Search debounce period elapsed.
+</ParamField>
+
+### init
+
+```typescript
+const model = Menu.init({
+  id: 'menu-1',
+  isAnimated: true,
+  isModal: false
+})
+```
+
+<ParamField path="id" type="string" required>
+  Unique identifier.
+</ParamField>
+
+<ParamField path="isAnimated" type="boolean" default="false">
+  Enables CSS transition coordination.
+</ParamField>
+
+<ParamField path="isModal" type="boolean" default="false">
+  Locks page scroll and inerts other elements when open.
+</ParamField>
+
+### view
+
+```typescript
+Menu.view({
+  model,
+  toMessage: identity,
+  items: ['Option 1', 'Option 2', 'Option 3'],
+  itemToConfig: (item, { isActive, isDisabled }) => ({
+    className: isActive ? 'menu-item-active' : 'menu-item',
+    content: div([], [item])
+  }),
+  buttonContent: span([], ['Open Menu']),
+  buttonClassName: 'menu-button',
+  itemsClassName: 'menu-items',
+  backdropClassName: 'menu-backdrop'
+})
+```
+
+<ParamField path="model" type="Model" required>
+  Menu model.
+</ParamField>
+
+<ParamField path="toMessage" type="(message) => Message" required>
+  Message mapper.
+</ParamField>
+
+<ParamField path="items" type="ReadonlyArray<Item>" required>
+  Array of items to render.
+</ParamField>
+
+<ParamField path="itemToConfig" type="(item, context) => ItemConfig" required>
+  Function mapping item to its configuration. Context includes `isActive` and `isDisabled`.
+</ParamField>
+
+<ParamField path="buttonContent" type="Html" required>
+  Button content.
+</ParamField>
+
+<ParamField path="buttonClassName" type="string" required>
+  Button CSS class.
+</ParamField>
+
+<ParamField path="itemsClassName" type="string" required>
+  Items container CSS class.
+</ParamField>
+
+<ParamField path="backdropClassName" type="string" required>
+  Backdrop CSS class.
+</ParamField>
+
+<ParamField path="isItemDisabled" type="(item, index) => boolean">
+  Predicate to mark items as disabled.
+</ParamField>
+
+<ParamField path="itemToSearchText" type="(item, index) => string">
+  Extract search text from item. Defaults to item value.
+</ParamField>
+
+<ParamField path="isButtonDisabled" type="boolean">
+  Disables the menu button.
+</ParamField>
+
+<ParamField path="itemsScrollClassName" type="string">
+  CSS class for scrollable items wrapper.
+</ParamField>
+
+<ParamField path="className" type="string">
+  CSS class for menu wrapper.
+</ParamField>
+
+<ParamField path="itemGroupKey" type="(item, index) => string">
+  Groups items by key.
+</ParamField>
+
+<ParamField path="groupToHeading" type="(groupKey) => GroupHeading | undefined">
+  Maps group key to heading element.
+</ParamField>
+
+<ParamField path="groupClassName" type="string">
+  CSS class for group wrapper.
+</ParamField>
+
+<ParamField path="separatorClassName" type="string">
+  CSS class for group separator.
+</ParamField>
+
+<ParamField path="anchor" type="AnchorConfig">
+  Floating positioning configuration.
+</ParamField>
+
+## Tabs
+
+Tab group with keyboard navigation, roving tabindex, and automatic or manual activation.
+
+### Model
+
+```typescript
+type Model = {
+  id: string
+  activeIndex: number
+  focusedIndex: number
+  activationMode: 'Automatic' | 'Manual'
+}
+```
+
+### Messages
+
+<ParamField path="TabSelected" type="{ index: number }">
+  Tab selected via click or keyboard.
+</ParamField>
+
+<ParamField path="TabFocused" type="{ index: number }">
+  Tab focused in Manual mode without activation.
+</ParamField>
+
+### init
+
+```typescript
+const model = Tabs.init({
+  id: 'tabs-1',
+  activeIndex: 0,
+  activationMode: 'Automatic'
+})
+```
+
+<ParamField path="id" type="string" required>
+  Unique identifier.
+</ParamField>
+
+<ParamField path="activeIndex" type="number" default="0">
+  Initial active tab index.
+</ParamField>
+
+<ParamField path="activationMode" type="'Automatic' | 'Manual'" default="'Automatic'">
+  Activation mode. `Automatic` activates on focus, `Manual` requires explicit selection.
+</ParamField>
+
+### view
+
+```typescript
+Tabs.view({
+  model,
+  toMessage: identity,
+  tabs: ['Tab 1', 'Tab 2', 'Tab 3'],
+  tabToConfig: (tab, { isActive }) => ({
+    buttonClassName: isActive ? 'tab-active' : 'tab',
+    buttonContent: span([], [tab]),
+    panelClassName: 'tab-panel',
+    panelContent: div([], [`Content for ${tab}`])
+  }),
+  orientation: 'Horizontal'
+})
+```
+
+<ParamField path="model" type="Model" required>
+  Tabs model.
+</ParamField>
+
+<ParamField path="toMessage" type="(message) => Message" required>
+  Message mapper.
+</ParamField>
+
+<ParamField path="tabs" type="ReadonlyArray<Tab>" required>
+  Array of tab identifiers.
+</ParamField>
+
+<ParamField path="tabToConfig" type="(tab, context) => TabConfig" required>
+  Maps tab to button and panel config. Context includes `isActive`.
+</ParamField>
+
+<ParamField path="isTabDisabled" type="(tab, index) => boolean">
+  Predicate to mark tabs as disabled.
+</ParamField>
+
+<ParamField path="persistPanels" type="boolean" default="false">
+  Keeps all panels in DOM. Default only renders active panel.
+</ParamField>
+
+<ParamField path="orientation" type="'Horizontal' | 'Vertical'" default="'Horizontal'">
+  Tab list orientation.
+</ParamField>
+
+<ParamField path="tabListElement" type="TagName" default="'div'">
+  Element tag for tab list container.
+</ParamField>
+
+<ParamField path="tabElement" type="TagName" default="'button'">
+  Element tag for tab buttons.
+</ParamField>
+
+<ParamField path="panelElement" type="TagName" default="'div'">
+  Element tag for tab panels.
+</ParamField>
+
+<ParamField path="className" type="string">
+  CSS class for wrapper.
+</ParamField>
+
+<ParamField path="tabListClassName" type="string">
+  CSS class for tab list.
+</ParamField>
+
+## Listbox
+
+Single or multi-select listbox with typeahead search and keyboard navigation.
+
+### Single-Select
+
+```typescript
+import * as Listbox from 'foldkit/ui'
+
+type Model = {
+  id: string
+  isOpen: boolean
+  isAnimated: boolean
+  isModal: boolean
+  transitionState: TransitionState
+  maybeActiveItemIndex: Option<number>
+  activationTrigger: 'Pointer' | 'Keyboard'
+  searchQuery: string
+  searchVersion: number
+  maybeLastPointerPosition: Option<{ screenX: number; screenY: number }>
+  maybeSelectedItem: Option<string>
+}
+```
+
+#### init
+
+```typescript
+const model = Listbox.init({
+  id: 'listbox-1',
+  isAnimated: false,
+  isModal: false,
+  selectedItem: 'option-1'
+})
+```
+
+<ParamField path="selectedItem" type="string">
+  Initial selected item value.
+</ParamField>
+
+### Multi-Select
+
+```typescript
+import * as Listbox from 'foldkit/ui'
+
+const model = Listbox.Multi.init({
+  id: 'listbox-multi',
+  selectedItems: ['option-1', 'option-2']
+})
+```
+
+<ParamField path="selectedItems" type="ReadonlyArray<string>" default="[]">
+  Initial selected item values.
+</ParamField>
+
+### view
+
+Identical to Menu view configuration. See [Menu view](#view-1) for full parameter list.
+
+## Combobox
+
+Autocomplete input with dropdown list, supporting filtering and selection.
+
+### Model
+
+```typescript
+type Model = {
+  id: string
+  isOpen: boolean
+  isAnimated: boolean
+  isModal: boolean
+  transitionState: TransitionState
+  maybeActiveItemIndex: Option<number>
+  activationTrigger: 'Pointer' | 'Keyboard'
+  inputValue: string
+  maybeSelectedItem: Option<string>
+  maybeSelectedDisplayText: Option<string>
+  maybeLastPointerPosition: Option<{ screenX: number; screenY: number }>
+}
+```
+
+### Messages
+
+<ParamField path="UpdatedInputValue" type="{ value: string }">
+  Input value changed. Opens dropdown if closed.
+</ParamField>
+
+<ParamField path="PressedToggleButton" type="Message">
+  Optional toggle button clicked.
+</ParamField>
+
+<ParamField path="SelectedItem" type="{ item: string; displayText: string }">
+  Item selected. Updates input value and closes dropdown.
+</ParamField>
+
+### init
+
+```typescript
+const model = Combobox.init({
+  id: 'combobox-1',
+  isAnimated: true,
+  isModal: false
+})
+```
+
+### view
+
+Similar to Menu, but includes input and optional toggle button. Full configuration includes all Menu parameters plus:
+
+<ParamField path="inputClassName" type="string" required>
+  CSS class for input element.
+</ParamField>
+
+<ParamField path="inputWrapperClassName" type="string" required>
+  CSS class for input wrapper.
+</ParamField>
+
+<ParamField path="inputPlaceholder" type="string">
+  Input placeholder text.
+</ParamField>
+
+<ParamField path="toggleButtonContent" type="Html">
+  Optional toggle button content.
+</ParamField>
+
+<ParamField path="toggleButtonClassName" type="string">
+  CSS class for toggle button.
+</ParamField>
+
+## Popover
+
+Floating panel with trigger button, supporting positioning and transitions.
+
+### Model
+
+```typescript
+type Model = {
+  id: string
+  isOpen: boolean
+  isAnimated: boolean
+  isModal: boolean
+  transitionState: TransitionState
+  maybeLastButtonPointerType: Option<string>
+}
+```
+
+### Messages
+
+<ParamField path="Opened" type="Message">
+  Opens popover and focuses panel.
+</ParamField>
+
+<ParamField path="Closed" type="Message">
+  Closes popover and returns focus to button.
+</ParamField>
+
+<ParamField path="ClosedByTab" type="Message">
+  Closes via Tab key without returning focus.
+</ParamField>
+
+### init
+
+```typescript
+const model = Popover.init({
+  id: 'popover-1',
+  isAnimated: true,
+  isModal: false
+})
+```
+
+### view
+
+```typescript
+Popover.view({
+  model,
+  toMessage: identity,
+  anchor: {
+    placement: 'bottom-start',
+    offset: 8
+  },
+  buttonContent: span([], ['Open']),
+  buttonClassName: 'popover-button',
+  panelContent: div([], ['Panel content']),
+  panelClassName: 'popover-panel',
+  backdropClassName: 'popover-backdrop',
+  isDisabled: false
+})
+```
+
+<ParamField path="anchor" type="AnchorConfig" required>
+  Floating positioning configuration with `placement`, `offset`, and optional middleware.
+</ParamField>
+
+<ParamField path="isDisabled" type="boolean">
+  Disables the popover button.
+</ParamField>
+
+Other parameters match Dialog view.
+
+## Switch
+
+Toggle switch with accessible ARIA attributes and form integration.
+
+### Model
+
+```typescript
+type Model = {
+  id: string
+  isChecked: boolean
+}
+```
+
+### Messages
+
+<ParamField path="Toggled" type="Message">
+  Switch toggled via click or Space key.
+</ParamField>
+
+### init
+
+```typescript
+const model = Switch.init({
+  id: 'switch-1',
+  isChecked: false
+})
+```
+
+<ParamField path="id" type="string" required>
+  Unique identifier.
+</ParamField>
+
+<ParamField path="isChecked" type="boolean" default="false">
+  Initial checked state.
+</ParamField>
+
+### view
+
+Switch uses a render props pattern, providing attribute groups for full layout control:
+
+```typescript
+Switch.view({
+  model,
+  toMessage: identity,
+  toView: ({ button, label, description, hiddenInput }) =>
+    div([], [
+      div(button, [
+        span([Class('switch-thumb')], [])
+      ]),
+      div(label, [span([], ['Enable feature'])]),
+      div(description, [span([], ['Description text'])]),
+      input(hiddenInput, [])
+    ]),
+  isDisabled: false,
+  name: 'feature-toggle',
+  value: 'enabled'
+})
+```
+
+<ParamField path="toView" type="(attributes: SwitchAttributes<Message>) => Html" required>
+  Render function receiving attribute groups for button, label, description, and hidden input.
+</ParamField>
+
+<ParamField path="isDisabled" type="boolean">
+  Disables the switch.
+</ParamField>
+
+<ParamField path="name" type="string">
+  Form control name. Creates hidden input when provided.
+</ParamField>
+
+<ParamField path="value" type="string" default="'on'">
+  Form value when checked.
+</ParamField>
+
+## Disclosure
+
+Expandable content section with button and panel.
+
+### Model
+
+```typescript
+type Model = {
+  id: string
+  isOpen: boolean
+}
+```
+
+### Messages
+
+<ParamField path="Toggled" type="Message">
+  Disclosure toggled via button click.
+</ParamField>
+
+<ParamField path="Closed" type="Message">
+  Explicitly closes disclosure.
+</ParamField>
+
+### init
+
+```typescript
+const model = Disclosure.init({
+  id: 'disclosure-1',
+  isOpen: false
+})
+```
+
+### view
+
+```typescript
+Disclosure.view({
+  model,
+  toMessage: identity,
+  buttonClassName: 'disclosure-button',
+  buttonContent: span([], ['Show details']),
+  panelClassName: 'disclosure-panel',
+  panelContent: div([], ['Panel content']),
+  isDisabled: false,
+  persistPanel: false,
+  buttonElement: 'button',
+  panelElement: 'div'
+})
+```
+
+<ParamField path="isDisabled" type="boolean">
+  Disables the disclosure button.
+</ParamField>
+
+<ParamField path="persistPanel" type="boolean" default="false">
+  Keeps panel in DOM when closed (with `hidden` attribute).
+</ParamField>
+
+<ParamField path="buttonElement" type="TagName" default="'button'">
+  Element tag for button.
+</ParamField>
+
+<ParamField path="panelElement" type="TagName" default="'div'">
+  Element tag for panel.
+</ParamField>
+
+## TransitionState
+
+Shared transition state type used by animated components:
+
+```typescript
+type TransitionState =
+  | 'Idle'
+  | 'EnterStart'
+  | 'EnterAnimating'
+  | 'LeaveStart'
+  | 'LeaveAnimating'
+```
+
+Components with `isAnimated: true` coordinate CSS transitions using data attributes:
+
+- `data-closed` — Applied during `EnterStart` and `LeaveAnimating`
+- `data-enter` — Applied during `EnterStart` and `EnterAnimating`
+- `data-leave` — Applied during `LeaveStart` and `LeaveAnimating`
+- `data-transition` — Applied during all transition states
+
+Use these attributes in your CSS to define enter/leave animations:
+
+```css
+.menu-items {
+  opacity: 1;
+  transition: opacity 200ms;
+}
+
+.menu-items[data-closed] {
+  opacity: 0;
+}
+```

@@ -1,0 +1,258 @@
+---
+title: Messages
+description: Define type-safe, past-tense events that describe what happened in your application
+---
+
+Messages are the events that drive state changes in Foldkit. They describe what happened, not what should happen. Messages are immutable data structures created with the `m` helper.
+
+## Basic Messages
+
+Define messages using the `m` helper from `foldkit/message`:
+
+```typescript
+import { m } from 'foldkit/message'
+import { Schema as S } from 'effect'
+
+const ClickedIncrement = m('ClickedIncrement')
+const ClickedDecrement = m('ClickedDecrement')
+const ClickedReset = m('ClickedReset')
+
+const Message = S.Union(ClickedIncrement, ClickedDecrement, ClickedReset)
+type Message = typeof Message.Type
+```
+
+The `m` function creates a callable Schema constructor. `ClickedIncrement()` returns a message object with a `_tag` discriminator.
+
+## Messages with Payload
+
+Most messages carry data:
+
+```typescript
+import { m } from 'foldkit/message'
+import { Schema as S } from 'effect'
+
+const UpdatedInput = m('UpdatedInput', { value: S.String })
+const SubmittedForm = m('SubmittedForm', { 
+  email: S.String,
+  password: S.String,
+})
+const ReceivedData = m('ReceivedData', { 
+  items: S.Array(S.String),
+  timestamp: S.Number,
+})
+
+const Message = S.Union(UpdatedInput, SubmittedForm, ReceivedData)
+type Message = typeof Message.Type
+```
+
+Call the constructor with the payload:
+
+```typescript
+const message = UpdatedInput({ value: 'hello' })
+// { _tag: 'UpdatedInput', value: 'hello' }
+```
+
+## Message Naming Conventions
+
+Messages are past-tense facts:
+
+<CodeGroup>
+
+```typescript Good: Past-tense events
+const ClickedButton = m('ClickedButton')
+const SubmittedForm = m('SubmittedForm', { data: S.String })
+const ReceivedResponse = m('ReceivedResponse', { body: S.String })
+const LoadedData = m('LoadedData', { items: S.Array(S.String) })
+```
+
+```typescript Bad: Imperative commands  
+const ClickButton = m('ClickButton') // No!
+const SubmitForm = m('SubmitForm') // No!
+const LoadData = m('LoadData') // No!
+```
+
+</CodeGroup>
+
+The verb prefix acts as a category:
+
+- `Clicked*` — Button and link clicks
+- `Updated*` — Input changes
+- `Submitted*` — Form submissions  
+- `Requested*` — Async operation starts
+- `Received*` / `Got*` — Async operation results
+- `Failed*` — Error cases
+
+## Message Layout
+
+Messages follow a strict four-group layout:
+
+```typescript packages/examples/counter/src/main.ts
+import { m } from 'foldkit/message'
+import { Schema as S } from 'effect'
+
+// Group 1: Message constructors (no blank lines between)
+const ClickedDecrement = m('ClickedDecrement')
+const ClickedIncrement = m('ClickedIncrement')
+const ClickedReset = m('ClickedReset')
+
+// Group 2: Union and type (adjacent, no blank line)
+const Message = S.Union(ClickedDecrement, ClickedIncrement, ClickedReset)
+type Message = typeof Message.Type
+```
+
+For large applications, extract to a dedicated `message.ts` file:
+
+```typescript packages/examples/auth/src/message.ts
+import { Schema as S } from 'effect'
+import { Runtime } from 'foldkit'
+import { m } from 'foldkit/message'
+import { Url } from 'foldkit/url'
+import { Session } from './domain/session'
+import { LoggedIn, LoggedOut } from './page'
+
+const NoOp = m('NoOp')
+const ClickedLink = m('ClickedLink', { request: Runtime.UrlRequest })
+const ChangedUrl = m('ChangedUrl', { url: Url })
+const LoadedSession = m('LoadedSession', { session: S.Option(Session) })
+const SavedSession = m('SavedSession')
+const FailedSessionSave = m('FailedSessionSave', { error: S.String })
+const GotLoggedOutMessage = m('GotLoggedOutMessage', {
+  message: LoggedOut.Message,
+})
+const GotLoggedInMessage = m('GotLoggedInMessage', {
+  message: LoggedIn.Message,
+})
+
+const Message = S.Union(
+  NoOp,
+  ClickedLink,
+  ChangedUrl,
+  LoadedSession,
+  SavedSession,
+  FailedSessionSave,
+  GotLoggedOutMessage,
+  GotLoggedInMessage,
+)
+type Message = typeof Message.Type
+```
+
+## Real-World Example: Stopwatch
+
+Here's the message definition from the stopwatch example:
+
+```typescript packages/examples/stopwatch/src/main.ts
+import { m } from 'foldkit/message'
+import { Schema as S } from 'effect'
+
+const RequestedStart = m('RequestedStart')
+const GotStartTime = m('GotStartTime', { startTime: S.Number })
+const ClickedStop = m('ClickedStop')
+const ClickedReset = m('ClickedReset')
+const RequestedTick = m('RequestedTick')
+const GotTick = m('GotTick', { elapsedMs: S.Number })
+
+const Message = S.Union(
+  RequestedStart,
+  GotStartTime,
+  ClickedStop,
+  ClickedReset,
+  RequestedTick,
+  GotTick,
+)
+type Message = typeof Message.Type
+```
+
+Notice the request/response pairs:
+- `RequestedStart` → `GotStartTime`
+- `RequestedTick` → `GotTick`
+
+This pattern separates the user intent from the side effect result.
+
+## Nested Messages
+
+Large applications compose messages from child components:
+
+```typescript packages/examples/auth/src/page/loggedIn/view.ts
+import { GotSettingsMessage, Message } from './message'
+
+const view = (
+  model: Model,
+  toMessage: (message: Message) => ParentMessage,
+): Html =>
+  M.value(model.route).pipe(
+    M.tagsExhaustive({
+      Settings: () =>
+        Settings.view(model.session, message =>
+          toMessage(GotSettingsMessage({ message })),
+        ),
+    }),
+  )
+```
+
+The child view receives a `toMessage` callback that wraps its messages in a parent message.
+
+## Using Messages in Views
+
+Messages are passed to event handlers:
+
+```typescript
+import { html } from 'foldkit/html'
+
+const { button, input, OnClick, OnInput } = html<Message>()
+
+const view = (model: Model): Html =>
+  div(
+    [],
+    [
+      input([OnInput(value => UpdatedInput({ value }))])]),
+      button([OnClick(ClickedSubmit())], ['Submit']),
+    ],
+  )
+```
+
+Some handlers take a function that receives event data and returns a message:
+
+- `OnInput(value => ...)` — Receives input value
+- `OnKeyDown((key, modifiers) => ...)` — Receives key and modifiers
+- `OnPointerMove((x, y, type) => ...)` — Receives pointer coordinates
+
+## NoOp Message
+
+Sometimes commands don't need to produce a meaningful result:
+
+```typescript
+const NoOp = m('NoOp')
+
+const logError = (message: string): Command<typeof NoOp> =>
+  Console.error(message).pipe(Effect.as(NoOp()))
+```
+
+Use `NoOp` when a side effect exists only for its effect (logging, analytics, etc.).
+
+## Individual Type Exports
+
+<Warning>
+Don't create individual type aliases unless building a public API:
+
+```typescript
+// ❌ Unnecessary
+type ClickedIncrement = typeof ClickedIncrement.Type
+type ClickedDecrement = typeof ClickedDecrement.Type
+
+// ✅ Use the schema directly
+Command<typeof ClickedIncrement | typeof ClickedDecrement>
+```
+
+In callbacks and command return types, use `typeof SchemaName` directly.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Update" icon="arrows-rotate" href="/concepts/update">
+    Handle messages to produce new models
+  </Card>
+  <Card title="Commands" icon="terminal" href="/concepts/commands">
+    Return commands from update to trigger side effects
+  </Card>
+</CardGroup>

@@ -1,0 +1,397 @@
+---
+title: ManagedResource
+description: Model-driven resources with acquire/release lifecycle
+---
+
+Managed resources are expensive or stateful resources that should only exist while your model is in a particular state. Examples include camera streams during video calls, WebSocket connections on chat pages, or Web Worker pools during computations.
+
+## Overview
+
+Unlike static resources (provided via the `resources` config) which live for the entire application lifetime, managed resources are acquired and released based on the current model state.
+
+```typescript
+import { ManagedResource } from 'foldkit/managed-resource'
+import { Effect, Option, pipe, Schema as S } from 'effect'
+
+// Create a resource identity
+const CameraStream = ManagedResource.tag<MediaStream>()('CameraStream')
+
+// Define resource dependencies
+const ManagedResourceDeps = S.Struct({
+  camera: S.Option(S.Struct({ facingMode: S.String })),
+})
+
+// Configure the resource
+const managedResources = ManagedResource.makeManagedResources(
+  ManagedResourceDeps,
+)<Model, Message>({
+  camera: {
+    resource: CameraStream,
+    modelToMaybeRequirements: model =>
+      pipe(
+        model.callState,
+        Option.liftPredicate(
+          (callState): callState is typeof InCall.Type =>
+            callState._tag === 'InCall',
+        ),
+        Option.map(callState => ({ facingMode: callState.facingMode })),
+      ),
+    acquire: ({ facingMode }) =>
+      Effect.tryPromise(() =>
+        navigator.mediaDevices.getUserMedia({ video: { facingMode } }),
+      ),
+    release: stream =>
+      Effect.sync(() => stream.getTracks().forEach(track => track.stop())),
+    onAcquired: () => AcquiredCamera(),
+    onAcquireError: error => FailedToAcquireCamera({ error: String(error) }),
+    onReleased: () => ReleasedCamera(),
+  },
+})
+```
+
+## tag
+
+Creates a managed resource identity with a `.get` accessor for use in commands.
+
+```typescript
+import { ManagedResource } from 'foldkit/managed-resource'
+
+// Create a resource tag
+const AudioContext = ManagedResource.tag<AudioContext>()('AudioContext')
+const WebSocket = ManagedResource.tag<WebSocket>()('WebSocket')
+const CameraStream = ManagedResource.tag<MediaStream>()('CameraStream')
+```
+
+### Parameters
+
+<ParamField path="key" type="string" required>
+  Unique identifier for this managed resource. Must be unique across all managed resources in your application.
+</ParamField>
+
+### Returns
+
+<ResponseField name="resource" type="ManagedResource<Value, Service>">
+  A managed resource identity that can be passed to `makeManagedResources` and used to access the resource in commands via `.get`
+</ResponseField>
+
+## makeManagedResources
+
+Creates type-safe managed resource configurations from a dependency schema.
+
+```typescript
+import { ManagedResource } from 'foldkit/managed-resource'
+import { Schema as S, Effect, Option } from 'effect'
+
+const AudioContext = ManagedResource.tag<AudioContext>()('AudioContext')
+
+const ManagedResourceDeps = S.Struct({
+  audio: S.Option(S.Struct({
+    sampleRate: S.Number,
+  })),
+})
+
+const managedResources = ManagedResource.makeManagedResources(
+  ManagedResourceDeps,
+)<Model, Message>({
+  audio: {
+    resource: AudioContext,
+    modelToMaybeRequirements: model => model.audioConfig,
+    acquire: ({ sampleRate }) =>
+      Effect.sync(() => new window.AudioContext({ sampleRate })),
+    release: context =>
+      Effect.tryPromise(() => context.close()),
+    onAcquired: () => AcquiredAudioContext(),
+    onAcquireError: error => FailedToAcquireAudio({ error: String(error) }),
+    onReleased: () => ReleasedAudioContext(),
+  },
+})
+```
+
+### Parameters
+
+<ParamField path="ManagedResourceDeps" type="Schema.Struct" required>
+  A Schema struct where each field's type represents the requirements for one managed resource. Use `S.Option(...)` for resources that can be released.
+</ParamField>
+
+### Returns
+
+A function that accepts resource configurations and returns a `ManagedResources` object.
+
+<Expandable title="Configuration object">
+  <ParamField path="resource" type="ManagedResource" required>
+    The identity tag created with `ManagedResource.tag`. Appears in the Effect R channel for type-checking.
+  </ParamField>
+
+  <ParamField path="modelToMaybeRequirements" type="(model: Model) => Option<Requirements> | Requirements" required>
+    Extracts requirements from the model. Return `Option.none()` to release the resource, or `Option.some(params)` to acquire/re-acquire if params changed.
+  </ParamField>
+
+  <ParamField path="acquire" type="(params: Requirements) => Effect.Effect<Value, Error>" required>
+    Creates the resource from the unwrapped params. Should fail when acquisition fails - errors flow to `onAcquireError` as messages.
+  </ParamField>
+
+  <ParamField path="release" type="(value: Value) => Effect.Effect<void>" required>
+    Tears down the resource. Errors are silently swallowed - release must not block cleanup.
+  </ParamField>
+
+  <ParamField path="onAcquired" type="(value: Value) => Message" required>
+    Message dispatched when `acquire` succeeds.
+  </ParamField>
+
+  <ParamField path="onAcquireError" type="(error: unknown) => Message" required>
+    Message dispatched when `acquire` fails.
+  </ParamField>
+
+  <ParamField path="onReleased" type="() => Message" required>
+    Message dispatched after `release` completes.
+  </ParamField>
+</Expandable>
+
+## Accessing Resources in Commands
+
+Use the `.get` property to access the resource value in commands:
+
+```typescript
+import { Effect } from 'effect'
+import { Command } from 'foldkit/command'
+
+const playSound = (
+  frequency: number
+): Command<typeof NoOp, never, typeof AudioContext> =>
+  Effect.gen(function* () {
+    const context = yield* AudioContext.get
+    
+    const oscillator = context.createOscillator()
+    oscillator.frequency.value = frequency
+    oscillator.connect(context.destination)
+    oscillator.start()
+    oscillator.stop(context.currentTime + 0.5)
+    
+    return NoOp()
+  })
+```
+
+The `.get` accessor returns an Effect that:
+- Succeeds with the resource value if the resource is currently acquired
+- Fails with `ResourceNotAvailable` if the resource is not currently active
+
+## Lifecycle
+
+The runtime watches each resource's `modelToMaybeRequirements` after every model update:
+
+1. **Acquisition**: `Option.none()` → `Option.some(params)`
+   - Calls `acquire(params)`
+   - Dispatches `onAcquired(value)` on success
+   - Dispatches `onAcquireError(error)` on failure
+
+2. **Re-acquisition**: `Option.some(paramsA)` → `Option.some(paramsB)` (structurally different)
+   - Calls `release(oldValue)`
+   - Dispatches `onReleased()`
+   - Calls `acquire(paramsB)`
+   - Dispatches `onAcquired(newValue)`
+
+3. **Release**: `Option.some(params)` → `Option.none()`
+   - Calls `release(value)`
+   - Dispatches `onReleased()`
+
+4. **No-op**: Requirements stay structurally equivalent
+   - No lifecycle events occur
+
+## Common Patterns
+
+### Camera Stream
+
+```typescript
+import { ManagedResource } from 'foldkit/managed-resource'
+import { Effect, Schema as S } from 'effect'
+
+const CameraStream = ManagedResource.tag<MediaStream>()('CameraStream')
+
+const ManagedResourceDeps = S.Struct({
+  camera: S.Option(S.Struct({
+    facingMode: S.Literal('user', 'environment'),
+  })),
+})
+
+const managedResources = ManagedResource.makeManagedResources(
+  ManagedResourceDeps,
+)<Model, Message>({
+  camera: {
+    resource: CameraStream,
+    modelToMaybeRequirements: model => model.cameraConfig,
+    acquire: ({ facingMode }) =>
+      Effect.tryPromise(() =>
+        navigator.mediaDevices.getUserMedia({
+          video: { facingMode },
+        }),
+      ),
+    release: stream =>
+      Effect.sync(() => {
+        stream.getTracks().forEach(track => track.stop())
+      }),
+    onAcquired: () => AcquiredCamera(),
+    onAcquireError: error => FailedToAcquireCamera({ error: String(error) }),
+    onReleased: () => ReleasedCamera(),
+  },
+})
+```
+
+### WebSocket Connection
+
+```typescript
+import { ManagedResource } from 'foldkit/managed-resource'
+import { Effect, Schema as S } from 'effect'
+
+const WebSocketConnection = ManagedResource.tag<WebSocket>()('WebSocket')
+
+const ManagedResourceDeps = S.Struct({
+  websocket: S.Option(S.Struct({
+    url: S.String,
+  })),
+})
+
+const managedResources = ManagedResource.makeManagedResources(
+  ManagedResourceDeps,
+)<Model, Message>({
+  websocket: {
+    resource: WebSocketConnection,
+    modelToMaybeRequirements: model => model.websocketUrl,
+    acquire: ({ url }) =>
+      Effect.async<WebSocket, Error>(resume => {
+        const ws = new WebSocket(url)
+        ws.onopen = () => resume(Effect.succeed(ws))
+        ws.onerror = () => resume(Effect.fail(new Error('Connection failed')))
+      }),
+    release: ws =>
+      Effect.sync(() => {
+        ws.close()
+      }),
+    onAcquired: () => ConnectedToWebSocket(),
+    onAcquireError: error => FailedToConnect({ error: String(error) }),
+    onReleased: () => DisconnectedFromWebSocket(),
+  },
+})
+```
+
+### Web Worker Pool
+
+```typescript
+import { ManagedResource } from 'foldkit/managed-resource'
+import { Effect, Array, Schema as S } from 'effect'
+
+type WorkerPool = ReadonlyArray<Worker>
+
+const WorkerPool = ManagedResource.tag<WorkerPool>()('WorkerPool')
+
+const ManagedResourceDeps = S.Struct({
+  workers: S.Option(S.Struct({
+    count: S.Number,
+  })),
+})
+
+const managedResources = ManagedResource.makeManagedResources(
+  ManagedResourceDeps,
+)<Model, Message>({
+  workers: {
+    resource: WorkerPool,
+    modelToMaybeRequirements: model => model.workerConfig,
+    acquire: ({ count }) =>
+      Effect.sync(() =>
+        Array.makeBy(count, () => new Worker('/worker.js')),
+      ),
+    release: workers =>
+      Effect.sync(() => {
+        workers.forEach(worker => worker.terminate())
+      }),
+    onAcquired: () => AcquiredWorkers(),
+    onAcquireError: error => FailedToAcquireWorkers({ error: String(error) }),
+    onReleased: () => ReleasedWorkers(),
+  },
+})
+```
+
+### Audio Context
+
+```typescript
+import { ManagedResource } from 'foldkit/managed-resource'
+import { Effect, Schema as S } from 'effect'
+
+const AudioContext = ManagedResource.tag<AudioContext>()('AudioContext')
+
+const ManagedResourceDeps = S.Struct({
+  audio: S.Option(S.Null),
+})
+
+const managedResources = ManagedResource.makeManagedResources(
+  ManagedResourceDeps,
+)<Model, Message>({
+  audio: {
+    resource: AudioContext,
+    modelToMaybeRequirements: model =>
+      model.audioEnabled ? Option.some(null) : Option.none(),
+    acquire: () =>
+      Effect.sync(() => new window.AudioContext()),
+    release: context =>
+      Effect.tryPromise(() => context.close()),
+    onAcquired: () => AcquiredAudio(),
+    onAcquireError: error => FailedToAcquireAudio({ error: String(error) }),
+    onReleased: () => ReleasedAudio(),
+  },
+})
+```
+
+## Using in Runtime
+
+Pass managed resources to `makeElement` or `makeApplication`:
+
+```typescript
+import { Runtime } from 'foldkit'
+
+const app = Runtime.makeApplication({
+  Model,
+  init,
+  update,
+  view,
+  container: document.getElementById('root')!,
+  browser: { /* ... */ },
+  managedResources,
+})
+
+Runtime.run(app)
+```
+
+## Error Handling
+
+### ResourceNotAvailable
+
+When a command tries to access a resource that isn't currently acquired:
+
+```typescript
+import { ManagedResource } from 'foldkit/managed-resource'
+import { Effect } from 'effect'
+
+const playSound = (): Command<typeof NoOp | typeof AudioNotAvailable> =>
+  Effect.gen(function* () {
+    const context = yield* AudioContext.get
+    // use context...
+    return NoOp()
+  }).pipe(
+    Effect.catchTag('ResourceNotAvailable', error =>
+      Effect.succeed(AudioNotAvailable({ resource: error.resource }))
+    )
+  )
+```
+
+## Best Practices
+
+1. **Use S.Option for requirements**: Always wrap requirements in `S.Option` so resources can be released
+
+2. **Use S.Null for parameterless resources**: Don't use `S.Struct({})` - it has no fields for equivalence comparison
+
+3. **Handle acquisition errors**: Always provide `onAcquireError` to handle cases where resource acquisition fails
+
+4. **Keep release simple**: Release should not fail. Use `Effect.sync` for synchronous cleanup.
+
+5. **Type the resource value**: Use `ManagedResource.tag<YourType>()` to get proper typing in commands
+
+6. **Extract requirements precisely**: Only include model fields that affect the resource's configuration

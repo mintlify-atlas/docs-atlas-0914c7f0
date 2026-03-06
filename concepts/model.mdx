@@ -1,0 +1,208 @@
+---
+title: Model
+description: Define your application state as a single Schema-validated data structure
+---
+
+The model is the single source of truth for your application's state. In Foldkit, models are defined using Effect Schema, providing runtime validation and type safety.
+
+## Basic Model
+
+Every model is a Schema struct:
+
+```typescript
+import { Schema as S } from 'effect'
+
+const Model = S.Struct({
+  count: S.Number,
+})
+
+type Model = typeof Model.Type
+```
+
+The schema serves two purposes:
+- **Type generation** — `typeof Model.Type` extracts the TypeScript type
+- **Runtime validation** — The runtime validates model updates during development
+
+## Model as Union
+
+For applications with distinct states, use discriminated unions:
+
+```typescript
+import { ts } from 'foldkit/schema'
+
+const Loading = ts('Loading')
+const Error = ts('Error', { message: S.String })
+const Loaded = ts('Loaded', { 
+  data: S.Array(S.String),
+  selectedIndex: S.Number,
+})
+
+const Model = S.Union(Loading, Error, Loaded)
+type Model = typeof Model.Type
+```
+
+The `ts` helper creates tagged schemas — each variant has a `_tag` discriminator for pattern matching in update and view.
+
+## Real-World Example: Todo App
+
+Here's the complete model from the todo example:
+
+```typescript packages/examples/todo/src/main.ts
+import { Schema as S } from 'effect'
+import { ts } from 'foldkit/schema'
+
+const Todo = S.Struct({
+  id: S.String,
+  text: S.String,
+  completed: S.Boolean,
+  createdAt: S.Number,
+})
+type Todo = typeof Todo.Type
+
+const Filter = S.Literal('All', 'Active', 'Completed')
+type Filter = typeof Filter.Type
+
+const NotEditing = ts('NotEditing')
+const Editing = ts('Editing', {
+  id: S.String,
+  text: S.String,
+})
+
+const EditingState = S.Union(NotEditing, Editing)
+type EditingState = typeof EditingState.Type
+
+const Model = S.Struct({
+  todos: S.Array(Todo),
+  newTodoText: S.String,
+  filter: Filter,
+  editing: EditingState,
+})
+type Model = typeof Model.Type
+```
+
+This model encodes several important patterns:
+
+- **Nested schemas** — `Todo` is a reusable schema within the model
+- **Literal types** — `Filter` is a closed set of valid values
+- **Union for substates** — `EditingState` makes impossible states unrepresentable
+- **Flat structure** — All state is in one place, no nested components
+
+## Option for Absent Values
+
+Use `Option` instead of nullable fields:
+
+```typescript
+import { Schema as S } from 'effect'
+import { Session } from './domain/session'
+
+const Model = S.Struct({
+  session: S.OptionFromSelf(Session),
+  errorMessage: S.OptionFromSelf(S.String),
+})
+```
+
+<Note>
+**Why Option?** — It forces explicit handling of the "missing" case and composes better than `null` checks.
+</Note>
+
+## Nested Page Models
+
+Large applications often model routes as unions:
+
+```typescript packages/examples/auth/src/model.ts
+import { Schema as S } from 'effect'
+import { LoggedIn, LoggedOut } from './page'
+
+const Model = S.Union(LoggedOut.Model, LoggedIn.Model)
+type Model = typeof Model.Type
+```
+
+Each page module exports its own `Model` schema. The top-level model is a union of all page states.
+
+## Model Evolution with `evo`
+
+When updating models, use the `evo` helper for type-safe field updates:
+
+```typescript
+import { evo } from 'foldkit/struct'
+
+const newModel = evo(model, {
+  count: count => count + 1,
+  lastUpdate: () => Date.now(),
+})
+```
+
+Each field receives its current value and returns the new value. Fields not mentioned are preserved.
+
+## Model Validation
+
+Schemas validate at runtime during development. If a model fails validation, the runtime logs a detailed error showing the exact field that's invalid.
+
+This catches bugs like:
+- Returning `undefined` for a required field
+- Assigning a string to a number field  
+- Forgetting a `_tag` in a union variant
+
+## Make Impossible States Unrepresentable
+
+<Warning>
+**Anti-pattern:**
+```typescript
+const Model = S.Struct({
+  isLoading: S.Boolean,
+  error: S.String, // Empty string means "no error"
+  data: S.Array(S.String), // Empty means "not loaded"
+})
+```
+
+This allows invalid combinations like `isLoading: true` with `data: [...]`.
+</Warning>
+
+**Better:**
+```typescript
+const Loading = ts('Loading')
+const Error = ts('Error', { message: S.String })
+const Loaded = ts('Loaded', { data: S.Array(S.String) })
+
+const Model = S.Union(Loading, Error, Loaded)
+```
+
+Now it's impossible to be loading and have data simultaneously.
+
+## Model Persistence
+
+Models are preserved during HMR (hot module replacement). When you save a file, the runtime sends the current model to Vite, which restores it after the module reloads.
+
+For localStorage persistence, decode the schema during init:
+
+```typescript packages/examples/todo/src/main.ts
+import { KeyValueStore } from '@effect/platform'
+import { BrowserKeyValueStore } from '@effect/platform-browser'
+import { Effect, Option, Schema as S } from 'effect'
+
+const Flags = S.Struct({
+  todos: S.Option(Todos),
+})
+
+const flags: Effect.Effect<Flags> = Effect.gen(function* () {
+  const store = yield* KeyValueStore.KeyValueStore
+  const maybeTodosJson = yield* store.get('todos')
+  const todosJson = yield* maybeTodosJson
+  const todos = yield* S.decode(S.parseJson(Todos))(todosJson)
+  return { todos: Option.some(todos) }
+}).pipe(
+  Effect.catchAll(() => Effect.succeed({ todos: Option.none() })),
+  Effect.provide(BrowserKeyValueStore.layerLocalStorage),
+)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Messages" icon="envelope" href="/concepts/messages">
+    Define events that transform your model
+  </Card>
+  <Card title="Update" icon="arrows-rotate" href="/concepts/update">
+    Write update functions that produce new models
+  </Card>
+</CardGroup>

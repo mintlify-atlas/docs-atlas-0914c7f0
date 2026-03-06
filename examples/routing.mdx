@@ -1,0 +1,277 @@
+---
+title: Routing
+description: Multi-page navigation with type-safe routing
+---
+
+The Routing example demonstrates how to build a multi-page application with type-safe routing, URL parsing, and navigation in Foldkit.
+
+## What You'll Learn
+
+- Defining routes with parameters and query strings
+- Type-safe route building and parsing
+- URL change handling
+- Internal and external navigation
+- 404 page handling
+- Browser history integration
+
+## Live Demo
+
+<Card title="Routing Demo" icon="play" href="https://foldkit.dev/examples/routing">
+  Click to see the live routing example
+</Card>
+
+## Key Features
+
+- 🔗 Type-safe route definitions
+- 🔍 Search/query parameter handling
+- 📄 Multiple page layouts
+- ❌ 404 Not Found page
+- 🎯 Active navigation highlighting
+- 🔙 Browser back/forward support
+
+## Defining Routes
+
+Routes are defined as discriminated unions with parameters:
+
+```typescript
+const HomeRoute = r('Home')
+const NestedRoute = r('Nested')
+const PeopleRoute = r('People', { searchText: S.Option(S.String) })
+const PersonRoute = r('Person', { personId: S.Number })
+const NotFoundRoute = r('NotFound', { path: S.String })
+
+export const AppRoute = S.Union(
+  HomeRoute,
+  NestedRoute,
+  PeopleRoute,
+  PersonRoute,
+  NotFoundRoute,
+)
+```
+
+## Route Parsers
+
+Each route has a parser that defines its URL structure:
+
+```typescript
+const homeRouter = pipe(Route.root, Route.mapTo(HomeRoute))
+
+const nestedRouter = pipe(
+  literal('nested'),
+  slash(literal('route')),
+  slash(literal('is')),
+  slash(literal('very')),
+  slash(literal('nested')),
+  Route.mapTo(NestedRoute),
+)
+
+const peopleRouter = pipe(
+  literal('people'),
+  Route.query(
+    S.Struct({
+      searchText: S.OptionFromUndefinedOr(S.String),
+    }),
+  ),
+  Route.mapTo(PeopleRoute),
+)
+
+const personRouter = pipe(
+  literal('people'),
+  slash(int('personId')),
+  Route.mapTo(PersonRoute),
+)
+```
+
+Combine parsers and create a URL-to-route function:
+
+```typescript
+const routeParser = Route.oneOf(
+  personRouter,
+  peopleRouter,
+  nestedRouter,
+  homeRouter,
+)
+
+const urlToAppRoute = Route.parseUrlWithFallback(routeParser, NotFoundRoute)
+```
+
+## Application Setup
+
+Applications (not elements) support routing:
+
+```typescript
+const app = Runtime.makeApplication({
+  Model,
+  init,
+  update,
+  view,
+  container: document.getElementById('root')!,
+  browser: {
+    onUrlRequest: request => ClickedLink({ request }),
+    onUrlChange: url => ChangedUrl({ url }),
+  },
+})
+```
+
+The `browser` config defines how URL changes turn into messages.
+
+## Initialization with URL
+
+The init function receives the initial URL:
+
+```typescript
+const init: Runtime.ApplicationInit<Model, Message> = (url: Url) => {
+  return [{ route: urlToAppRoute(url) }, []]
+}
+```
+
+## Handling Navigation
+
+When a user clicks a link:
+
+```typescript
+ClickedLink: ({ request }) =>
+  M.value(request).pipe(
+    M.tagsExhaustive({
+      Internal: ({ url }): [Model, ReadonlyArray<Command<typeof NoOp>>] => [
+        model,
+        [pushUrl(urlToString(url)).pipe(Effect.as(NoOp()))],
+      ],
+      External: ({ href }): [Model, ReadonlyArray<Command<typeof NoOp>>] => [
+        model,
+        [load(href).pipe(Effect.as(NoOp()))],
+      ],
+    }),
+  )
+```
+
+When the URL changes (via back/forward or pushUrl):
+
+```typescript
+ChangedUrl: ({ url }) => [
+  evo(model, {
+    route: () => urlToAppRoute(url),
+  }),
+  [],
+]
+```
+
+## Building URLs
+
+Routers can build URLs from parameters:
+
+```typescript
+// Home: /
+homeRouter.build({})
+
+// Person: /people/123
+personRouter.build({ personId: 123 })
+
+// People with search: /people?searchText=alice
+peopleRouter.build({ searchText: Option.some('alice') })
+```
+
+Use these in the view:
+
+```typescript
+a(
+  [Href(personRouter.build({ personId: person.id }))],
+  [person.name],
+)
+```
+
+## Search/Query Parameters
+
+The People route demonstrates query parameters:
+
+```typescript
+ChangedSearchInput: ({ value }) => [
+  model,
+  [
+    replaceUrl(
+      peopleRouter.build({
+        searchText: Option.fromNullable(value || null),
+      }),
+    ).pipe(Effect.as(NoOp())),
+  ],
+]
+```
+
+`replaceUrl` updates the URL without adding to browser history, useful for search inputs.
+
+## Rendering Pages
+
+Use `Match` to render different pages based on route:
+
+```typescript
+const view = (model: Model): Html => {
+  const routeContent = M.value(model.route).pipe(
+    M.tagsExhaustive({
+      Home: homeView,
+      Nested: nestedView,
+      People: ({ searchText }) => peopleView(searchText),
+      Person: ({ personId }) => personView(personId),
+      NotFound: ({ path }) => notFoundView(path),
+    }),
+  )
+
+  return div(
+    [Class('min-h-screen bg-gray-100')],
+    [
+      header([], [navigationView(model.route)]),
+      main(
+        [Class('py-8')],
+        [keyed('div')(model.route._tag, [], [routeContent])],
+      ),
+    ],
+  )
+}
+```
+
+<Note>
+Use `keyed` wrappers when the view structure changes significantly between routes to avoid DOM patching issues.
+</Note>
+
+## Active Navigation
+
+Highlight the current page in navigation:
+
+```typescript
+const navigationView = (currentRoute: AppRoute): Html => {
+  const navLinkClassName = (isActive: boolean) =>
+    `hover:bg-blue-600 font-medium px-3 py-1 rounded transition ${
+      isActive ? 'bg-blue-700 bg-opacity-50' : ''
+    }`
+
+  return nav(
+    [Class('bg-blue-500 text-white p-4 mb-6')],
+    [
+      a(
+        [
+          Href(homeRouter.build({})),
+          Class(navLinkClassName(currentRoute._tag === 'Home')),
+        ],
+        ['Home'],
+      ),
+      // ... more links
+    ],
+  )
+}
+```
+
+## Complete Source Code
+
+<Card title="routing/src/main.ts" icon="github" href="https://github.com/foldkit/foldkit/tree/main/examples/routing/src/main.ts">
+  View the complete source code on GitHub (500 lines)
+</Card>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Shopping Cart" icon="shopping-cart" href="/examples/shopping-cart">
+    Build a complex multi-page e-commerce app
+  </Card>
+  <Card title="Auth" icon="lock" href="/examples/auth">
+    Add authentication with protected routes
+  </Card>
+</CardGroup>

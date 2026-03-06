@@ -1,0 +1,299 @@
+---
+title: Runtime
+description: Core runtime functions for creating and running Foldkit applications
+---
+
+The Runtime module provides the core functions for creating and running Foldkit applications and elements. It handles the entire application lifecycle, including initialization, message processing, view rendering, and side effect execution.
+
+## makeElement
+
+Creates a Foldkit element (without URL routing) and returns a runtime that can be passed to `run`.
+
+```typescript
+import { Runtime } from 'foldkit'
+import { Schema as S } from 'effect'
+
+const element = Runtime.makeElement({
+  Model,
+  init: () => [{ count: 0 }, []],
+  update,
+  view,
+  container: document.getElementById('root')!,
+})
+
+Runtime.run(element)
+```
+
+### Parameters
+
+<ParamField path="config" type="ElementConfig" required>
+  Configuration object for the element
+
+  <Expandable title="ElementConfig properties">
+    <ParamField path="Model" type="Schema.Schema" required>
+      Effect Schema defining the shape of your application model
+    </ParamField>
+
+    <ParamField path="init" type="ElementInit" required>
+      Initialization function that returns the initial model and commands. Takes optional `flags` parameter if `Flags` schema is provided.
+      
+      ```typescript
+      // Without flags
+      init: () => [initialModel, initialCommands]
+      
+      // With flags
+      init: (flags) => [initialModel, initialCommands]
+      ```
+    </ParamField>
+
+    <ParamField path="update" type="(model: Model, message: Message) => [Model, Command[]]" required>
+      Update function that processes messages and returns the new model and commands to execute
+    </ParamField>
+
+    <ParamField path="view" type="(model: Model) => Html" required>
+      View function that renders the model to HTML
+    </ParamField>
+
+    <ParamField path="container" type="HTMLElement" required>
+      DOM element where the application will be mounted
+    </ParamField>
+
+    <ParamField path="Flags" type="Schema.Schema">
+      Optional schema for initial data passed to `init`
+    </ParamField>
+
+    <ParamField path="flags" type="Effect.Effect<Flags>">
+      Effect that produces the flags value. Required if `Flags` is provided.
+    </ParamField>
+
+    <ParamField path="subscriptions" type="Subscriptions">
+      Optional subscriptions that react to model changes
+    </ParamField>
+
+    <ParamField path="resources" type="Layer.Layer<Resources>">
+      Optional Effect Layer providing long-lived resources (HttpClient, AudioContext, etc.) that persist for the application's lifetime
+    </ParamField>
+
+    <ParamField path="managedResources" type="ManagedResources">
+      Optional model-driven resources with acquire/release lifecycle
+    </ParamField>
+
+    <ParamField path="errorView" type="(error: Error) => Html">
+      Optional custom error view to display when the application crashes
+    </ParamField>
+
+    <ParamField path="slowViewThresholdMs" type="number | false" default="16">
+      Threshold in milliseconds for logging slow view renders. Set to `false` to disable.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Returns
+
+<ResponseField name="runtime" type="MakeRuntimeReturn">
+  A configured runtime function that accepts an optional HMR model and returns an Effect
+</ResponseField>
+
+## makeApplication
+
+Creates a Foldkit application with URL routing and returns a runtime that can be passed to `run`.
+
+```typescript
+import { Runtime } from 'foldkit'
+import { Schema as S } from 'effect'
+
+const app = Runtime.makeApplication({
+  Model,
+  init: (url) => [initialModel, []],
+  update,
+  view,
+  container: document.getElementById('root')!,
+  browser: {
+    onUrlRequest: request => ClickedLink({ request }),
+    onUrlChange: url => ChangedUrl({ url }),
+  },
+})
+
+Runtime.run(app)
+```
+
+### Parameters
+
+<ParamField path="config" type="ApplicationConfig" required>
+  Configuration object for the application
+
+  <Expandable title="ApplicationConfig properties">
+    <ParamField path="Model" type="Schema.Schema" required>
+      Effect Schema defining the shape of your application model
+    </ParamField>
+
+    <ParamField path="init" type="ApplicationInit" required>
+      Initialization function that returns the initial model and commands. Receives the current URL and optional flags.
+      
+      ```typescript
+      // Without flags
+      init: (url) => [initialModel, initialCommands]
+      
+      // With flags
+      init: (flags, url) => [initialModel, initialCommands]
+      ```
+    </ParamField>
+
+    <ParamField path="update" type="(model: Model, message: Message) => [Model, Command[]]" required>
+      Update function that processes messages and returns the new model and commands to execute
+    </ParamField>
+
+    <ParamField path="view" type="(model: Model) => Html" required>
+      View function that renders the model to HTML
+    </ParamField>
+
+    <ParamField path="container" type="HTMLElement" required>
+      DOM element where the application will be mounted
+    </ParamField>
+
+    <ParamField path="browser" type="BrowserConfig" required>
+      Configuration for browser URL integration
+      
+      <Expandable title="BrowserConfig properties">
+        <ParamField path="onUrlRequest" type="(request: UrlRequest) => Message" required>
+          Handler for URL navigation requests (clicks on links, form submissions)
+        </ParamField>
+
+        <ParamField path="onUrlChange" type="(url: Url) => Message" required>
+          Handler for URL changes (browser back/forward, popstate events)
+        </ParamField>
+      </Expandable>
+    </ParamField>
+
+    <ParamField path="Flags" type="Schema.Schema">
+      Optional schema for initial data passed to `init`
+    </ParamField>
+
+    <ParamField path="flags" type="Effect.Effect<Flags>">
+      Effect that produces the flags value. Required if `Flags` is provided.
+    </ParamField>
+
+    <ParamField path="subscriptions" type="Subscriptions">
+      Optional subscriptions that react to model changes
+    </ParamField>
+
+    <ParamField path="resources" type="Layer.Layer<Resources>">
+      Optional Effect Layer providing long-lived resources that persist for the application's lifetime
+    </ParamField>
+
+    <ParamField path="managedResources" type="ManagedResources">
+      Optional model-driven resources with acquire/release lifecycle
+    </ParamField>
+
+    <ParamField path="errorView" type="(error: Error) => Html">
+      Optional custom error view to display when the application crashes
+    </ParamField>
+
+    <ParamField path="slowViewThresholdMs" type="number | false" default="16">
+      Threshold in milliseconds for logging slow view renders. Set to `false` to disable.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Returns
+
+<ResponseField name="runtime" type="MakeRuntimeReturn">
+  A configured runtime function that accepts an optional HMR model and returns an Effect
+</ResponseField>
+
+## run
+
+Starts a Foldkit runtime with HMR (Hot Module Replacement) support for development.
+
+```typescript
+import { Runtime } from 'foldkit'
+
+const app = Runtime.makeApplication({ /* config */ })
+
+Runtime.run(app)
+```
+
+### Parameters
+
+<ParamField path="runtime" type="MakeRuntimeReturn" required>
+  The runtime returned by `makeElement` or `makeApplication`
+</ParamField>
+
+### Returns
+
+<ResponseField name="void" type="void">
+  This function has no return value. It starts the application and runs indefinitely.
+</ResponseField>
+
+## Types
+
+### BrowserConfig
+
+Configuration for browser URL integration with handlers for URL requests and URL changes.
+
+```typescript
+type BrowserConfig<Message> = Readonly<{
+  onUrlRequest: (request: UrlRequest) => Message
+  onUrlChange: (url: Url) => Message
+}>
+```
+
+### ElementInit
+
+The initialization function type for elements, with an optional `flags` parameter when `Flags` is not `void`.
+
+```typescript
+type ElementInit<Model, Message, Flags = void> =
+  Flags extends void
+    ? () => [Model, ReadonlyArray<Command<Message>>]
+    : (flags: Flags) => [Model, ReadonlyArray<Command<Message>>]
+```
+
+### ApplicationInit
+
+The initialization function type for applications, receives the current URL and optional flags.
+
+```typescript
+type ApplicationInit<Model, Message, Flags = void> =
+  Flags extends void
+    ? (url: Url) => [Model, ReadonlyArray<Command<Message>>]
+    : (flags: Flags, url: Url) => [Model, ReadonlyArray<Command<Message>>]
+```
+
+### MakeRuntimeReturn
+
+A configured Foldkit runtime returned by `makeElement` or `makeApplication`, passed to `run` to start the application.
+
+```typescript
+type MakeRuntimeReturn = (hmrModel?: unknown) => Effect.Effect<void>
+```
+
+## Dispatch Service
+
+The Dispatch service provides message dispatching to the view layer. It's automatically provided to view functions and event handlers.
+
+```typescript
+import { Dispatch } from 'foldkit/runtime'
+import { Effect } from 'effect'
+
+// In a custom effect
+Effect.gen(function* () {
+  const dispatch = yield* Dispatch
+  
+  // Synchronous dispatch (use sparingly)
+  dispatch.dispatchSync(SomeMessage())
+  
+  // Asynchronous dispatch (preferred)
+  yield* dispatch.dispatchAsync(SomeMessage())
+})
+```
+
+### Methods
+
+<ParamField path="dispatchSync" type="(message: unknown) => void">
+  Synchronously dispatches a message. Use only when you need immediate processing.
+</ParamField>
+
+<ParamField path="dispatchAsync" type="(message: unknown) => Effect.Effect<void>">
+  Asynchronously dispatches a message. This is the preferred method for most cases.
+</ParamField>

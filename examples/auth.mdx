@@ -1,0 +1,371 @@
+---
+title: Authentication
+description: A complete authentication flow with session management and protected routes
+---
+
+The Auth example demonstrates how to build a complete authentication system with login/logout flows, session persistence, and route protection in Foldkit.
+
+## What You'll Learn
+
+- Session-based authentication
+- Protected routes and redirects
+- Local storage for session persistence
+- Model-as-union for logged in/out states
+- Multi-level routing architecture
+- Nested update functions
+- Flags for loading initial state
+
+## Live Demo
+
+<Card title="Auth Demo" icon="play" href="https://foldkit.dev/examples/auth">
+  Click to see the live authentication example
+</Card>
+
+## Key Features
+
+- 🔐 Login/logout functionality
+- 💾 Session persistence across page reloads
+- 🛡️ Protected routes (redirect if not authenticated)
+- 🚪 Public routes (redirect if already authenticated)
+- 📄 Multiple pages for logged in and logged out states
+- 🔄 Automatic redirect on authentication state change
+
+## Application Structure
+
+```
+auth/
+├── src/
+│   ├── main.ts               # Bootstrap and flags
+│   ├── model.ts              # Model union
+│   ├── message.ts            # App messages
+│   ├── update.ts             # Main update
+│   ├── view.ts               # Main view
+│   ├── route.ts              # Route definitions
+│   ├── domain/
+│   │   └── session.ts        # Session type
+│   └── page/
+│       ├── loggedOut/        # Logged out pages
+│       │   ├── index.ts
+│       │   ├── model.ts
+│       │   ├── message.ts
+│       │   ├── update.ts
+│       │   ├── view.ts
+│       │   └── page/
+│       │       ├── home.ts
+│       │       └── login.ts
+│       └── loggedIn/         # Logged in pages
+│           ├── index.ts
+│           ├── model.ts
+│           ├── message.ts
+│           ├── update.ts
+│           ├── view.ts
+│           └── page/
+│               ├── dashboard.ts
+│               └── settings.ts
+```
+
+## Model Architecture
+
+The root model is a union of logged in and logged out states:
+
+```typescript
+// model.ts
+export const Model = S.Union(LoggedOut.Model, LoggedIn.Model)
+export type Model = typeof Model.Type
+```
+
+Each state has its own model:
+
+```typescript
+// page/loggedOut/model.ts
+export const Model = ts('LoggedOut', {
+  route: LoggedOutRoute,
+  usernameInput: S.String,
+  isSubmitting: S.Boolean,
+})
+
+// page/loggedIn/model.ts
+export const Model = ts('LoggedIn', {
+  route: LoggedInRoute,
+  session: Session,
+})
+```
+
+This makes it impossible to be in an invalid state (like being logged in without a session).
+
+## Routes
+
+Routes are also split by authentication state:
+
+```typescript
+const HomeRoute = r('Home')
+const LoginRoute = r('Login')
+export const LoggedOutRoute = S.Union(HomeRoute, LoginRoute)
+
+const DashboardRoute = r('Dashboard')
+const SettingsRoute = r('Settings')
+export const LoggedInRoute = S.Union(DashboardRoute, SettingsRoute)
+
+export const AppRoute = S.Union(LoggedOutRoute, LoggedInRoute, NotFoundRoute)
+```
+
+## Session Persistence
+
+### Saving Session
+
+When a user logs in, save the session:
+
+```typescript
+const saveSession = (session: Session): Command<typeof SavedSession> =>
+  Effect.gen(function* () {
+    const store = yield* KeyValueStore.KeyValueStore
+    yield* store.set(
+      SESSION_STORAGE_KEY,
+      S.encodeSync(S.parseJson(Session))(session),
+    )
+    return SavedSession({ session })
+  }).pipe(
+    Effect.catchAll(() => Effect.succeed(SavedSession({ session }))),
+    Effect.provide(BrowserKeyValueStore.layerLocalStorage),
+  )
+```
+
+### Loading Session on Startup
+
+Use flags to load session before initialization:
+
+```typescript
+const Flags = S.Struct({
+  maybeSession: S.Option(Session),
+})
+
+const flags: Effect.Effect<Flags> = Effect.gen(function* () {
+  const store = yield* KeyValueStore.KeyValueStore
+  const maybeSessionJson = yield* store.get(SESSION_STORAGE_KEY)
+  const sessionJson = yield* maybeSessionJson
+
+  const decodeSession = S.decode(S.parseJson(Session))
+  const session = yield* decodeSession(sessionJson)
+
+  return { maybeSession: Option.some(session) }
+}).pipe(
+  Effect.catchAll(() => Effect.succeed({ maybeSession: Option.none() })),
+  Effect.provide(BrowserKeyValueStore.layerLocalStorage),
+)
+```
+
+### Initializing Based on Session
+
+```typescript
+const init: Runtime.ApplicationInit<Model, Message, Flags> = (
+  flags: Flags,
+  url: Url,
+): InitReturn => {
+  const route = urlToAppRoute(url)
+
+  return Option.match(flags.maybeSession, {
+    onNone: () =>
+      M.value(route).pipe(
+        withInitReturn,
+        M.when(S.is(LoggedOutRoute), route => [LoggedOut.init(route), []]),
+        M.orElse(() => [
+          LoggedOut.init(LoginRoute()),
+          [replaceUrl(loginRouter.build({})).pipe(Effect.as(NoOp()))],
+        ]),
+      ),
+
+    onSome: session =>
+      M.value(route).pipe(
+        withInitReturn,
+        M.when(S.is(LoggedInRoute), route => [
+          LoggedIn.init(route, session),
+          [],
+        ]),
+        M.orElse(() => [
+          LoggedIn.init(DashboardRoute(), session),
+          [replaceUrl(dashboardRouter.build({})).pipe(Effect.as(NoOp()))],
+        ]),
+      ),
+  })
+}
+```
+
+This ensures:
+- If no session and user tries to access protected route → redirect to login
+- If session exists and user tries to access login → redirect to dashboard
+
+## Login Flow
+
+Login is handled in the LoggedOut update:
+
+```typescript
+// page/loggedOut/update.ts
+SubmittedLogin: () => {
+  if (String.isEmpty(String.trim(model.usernameInput))) {
+    return [model, []]
+  }
+
+  return [
+    evo(model, {
+      isSubmitting: () => true,
+    }),
+    [createSession(String.trim(model.usernameInput))],
+  ]
+}
+
+GotSession: ({ session }) => [
+  model,
+  [saveSession(session), navigateToDashboard],
+]
+
+SavedSession: () => [model, []]
+```
+
+When the session is saved, the main update transitions to LoggedIn:
+
+```typescript
+// update.ts
+GotLoggedOutMessage: ({ message }) =>
+  M.value(model).pipe(
+    M.tag('LoggedOut', model => {
+      const [newModel, commands] = LoggedOut.update(model, message)
+
+      return M.value(message).pipe(
+        M.tag('GotSession', ({ session }) => [
+          LoggedIn.Model.make({
+            route: DashboardRoute(),
+            session,
+          }),
+          commands.map(Effect.map(msg => GotLoggedOutMessage({ message: msg }))),
+        ]),
+        M.orElse(() => [
+          newModel,
+          commands.map(Effect.map(msg => GotLoggedOutMessage({ message: msg }))),
+        ]),
+      )
+    }),
+    M.orElse(() => [model, []]),
+  )
+```
+
+## Logout Flow
+
+```typescript
+ClickedLogout: () => [
+  model,
+  [clearSession, navigateToHome],
+]
+
+const clearSession: Command<typeof ClearedSession> =
+  Effect.gen(function* () {
+    const store = yield* KeyValueStore.KeyValueStore
+    yield* store.remove(SESSION_STORAGE_KEY)
+    return ClearedSession()
+  }).pipe(
+    Effect.catchAll(() => Effect.succeed(ClearedSession())),
+    Effect.provide(BrowserKeyValueStore.layerLocalStorage),
+  )
+```
+
+In the main update, transition to LoggedOut:
+
+```typescript
+GotLoggedInMessage: ({ message }) =>
+  M.value(model).pipe(
+    M.tag('LoggedIn', model => {
+      const [newModel, commands] = LoggedIn.update(model, message)
+
+      return M.value(message).pipe(
+        M.tag('ClearedSession', () => [
+          LoggedOut.Model.make({
+            route: HomeRoute(),
+            usernameInput: '',
+            isSubmitting: false,
+          }),
+          commands.map(Effect.map(msg => GotLoggedInMessage({ message: msg }))),
+        ]),
+        M.orElse(() => [
+          newModel,
+          commands.map(Effect.map(msg => GotLoggedInMessage({ message: msg }))),
+        ]),
+      )
+    }),
+    M.orElse(() => [model, []]),
+  )
+```
+
+## Nested Updates
+
+The main update delegates to child updates:
+
+```typescript
+const update = (
+  model: Model,
+  message: Message,
+): [Model, ReadonlyArray<Command<Message>>] =>
+  M.value(message).pipe(
+    M.withReturnType<[Model, ReadonlyArray<Command<Message>>]>(),
+    M.tagsExhaustive({
+      NoOp: () => [model, []],
+
+      ClickedLink: handleClickedLink,
+
+      ChangedUrl: ({ url }) =>
+        M.value(model).pipe(
+          M.tag('LoggedOut', model => [
+            evo(model, { route: () => urlToAppRoute(url) as LoggedOutRoute }),
+            [],
+          ]),
+          M.tag('LoggedIn', model => [
+            evo(model, { route: () => urlToAppRoute(url) as LoggedInRoute }),
+            [],
+          ]),
+          M.exhaustive,
+        ),
+
+      GotLoggedOutMessage: handleLoggedOutMessage,
+
+      GotLoggedInMessage: handleLoggedInMessage,
+    }),
+  )
+```
+
+## Nested Views
+
+The main view delegates to child views:
+
+```typescript
+export const view = (model: Model): Html =>
+  M.value(model).pipe(
+    M.tag('LoggedOut', model => LoggedOut.view(model)),
+    M.tag('LoggedIn', model => LoggedIn.view(model)),
+    M.exhaustive,
+  )
+```
+
+Each child view has its own layout and page routing.
+
+## Complete Source Code
+
+<Card title="auth/" icon="github" href="https://github.com/foldkit/foldkit/tree/main/examples/auth">
+  View the complete source code on GitHub (multiple files)
+</Card>
+
+### Key Files
+
+- `src/main.ts` - Bootstrap and flags (101 lines)
+- `src/update.ts` - Main update with state transitions
+- `src/view.ts` - Main view dispatcher
+- `src/page/loggedOut/` - Logged out flow
+- `src/page/loggedIn/` - Logged in flow
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Shopping Cart" icon="shopping-cart" href="/examples/shopping-cart">
+    Build a multi-page e-commerce application
+  </Card>
+  <Card title="Todo" icon="check" href="/examples/todo">
+    Learn about local storage and persistence
+  </Card>
+</CardGroup>

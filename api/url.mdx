@@ -1,0 +1,384 @@
+---
+title: Url
+description: Type-safe URL parsing and serialization utilities
+---
+
+The `Url` module provides utilities for parsing and serializing URLs using Effect schemas. It represents URLs as structured data with optional fields for port, search, and hash components.
+
+## Import
+
+```typescript
+import { Url } from 'foldkit'
+import { Option } from 'effect'
+```
+
+## Core Concepts
+
+### Structured URL Representation
+
+Instead of working with raw URL strings, Foldkit represents URLs as typed objects with distinct fields for each component:
+
+- `protocol`: The URL scheme (e.g., `'https:'`, `'http:'`)
+- `host`: The hostname (e.g., `'example.com'`)
+- `port`: Optional port number
+- `pathname`: The URL path (e.g., `'/users/123'`)
+- `search`: Optional query string (e.g., `'q=search&page=2'`)
+- `hash`: Optional fragment identifier (e.g., `'section-1'`)
+
+### Option-Based Optional Fields
+
+Port, search, and hash are represented using Effect's `Option` type rather than nullable values. This provides type-safe handling of missing components.
+
+## Basic Example
+
+```typescript
+import { Url } from 'foldkit'
+import { Option } from 'effect'
+
+// Parse a URL string
+const maybeUrl = Url.fromString('https://example.com:8080/users/123?page=2#profile')
+
+Option.match(maybeUrl, {
+  onNone: () => console.log('Invalid URL'),
+  onSome: (url) => {
+    console.log(url.protocol)  // 'https:'
+    console.log(url.host)      // 'example.com'
+    console.log(url.port)      // Option.some('8080')
+    console.log(url.pathname)  // '/users/123'
+    console.log(url.search)    // Option.some('page=2')
+    console.log(url.hash)      // Option.some('profile')
+  }
+})
+
+// Serialize a URL back to a string
+const urlString = Url.toString(url)
+// => 'https://example.com:8080/users/123?page=2#profile'
+```
+
+## API Reference
+
+### Schema
+
+<ParamField path="Url" type="Schema">
+  Schema representing a parsed URL with protocol, host, port, pathname, search, and hash fields.
+
+  **Type:**
+  ```typescript
+  type Url = {
+    protocol: string
+    host: string
+    port: Option<string>
+    pathname: string
+    search: Option<string>
+    hash: Option<string>
+  }
+  ```
+
+  **Example:**
+  ```typescript
+  const url: Url = {
+    protocol: 'https:',
+    host: 'example.com',
+    port: Option.none(),
+    pathname: '/users/123',
+    search: Option.some('page=2'),
+    hash: Option.none()
+  }
+  ```
+</ParamField>
+
+### Functions
+
+<ParamField path="fromString" type="function">
+  Parses a URL string into a `Url`, returning `Option.none()` if invalid.
+
+  **Parameters:**
+  - `str` (string): The URL string to parse
+
+  **Returns:** `Option<Url>`
+
+  **Example:**
+  ```typescript
+  // Valid URL
+  const url1 = Url.fromString('https://example.com/path')
+  // => Option.some({ protocol: 'https:', host: 'example.com', ... })
+
+  // Invalid URL
+  const url2 = Url.fromString('not a valid url')
+  // => Option.none()
+
+  // Relative URLs require a base
+  const url3 = Url.fromString('/relative/path')
+  // => Option.none() (relative URLs need a protocol and host)
+  ```
+
+  **Notes:**
+  - Returns `Option.none()` for invalid URLs
+  - Requires absolute URLs with protocol and host
+  - Query strings are stored without the leading `?`
+  - Hashes are stored without the leading `#`
+</ParamField>
+
+<ParamField path="toString" type="function">
+  Serializes a `Url` back to a string.
+
+  **Parameters:**
+  - `url` (Url): The URL object to serialize
+
+  **Returns:** `string`
+
+  **Example:**
+  ```typescript
+  const url: Url = {
+    protocol: 'https:',
+    host: 'example.com',
+    port: Option.some('8080'),
+    pathname: '/api/users',
+    search: Option.some('limit=10'),
+    hash: Option.some('results')
+  }
+
+  Url.toString(url)
+  // => 'https://example.com:8080/api/users?limit=10#results'
+  ```
+
+  **Notes:**
+  - Automatically adds `?` prefix for search parameters
+  - Automatically adds `#` prefix for hash fragments
+  - Includes port only if present in `Option.some()`
+  - Pathname defaults to `/` if empty
+</ParamField>
+
+## Usage Patterns
+
+### Working with Optional Components
+
+Use `Option.match` to handle optional URL components:
+
+```typescript
+import { Url } from 'foldkit'
+import { Option, pipe } from 'effect'
+
+const url = Url.fromString('https://example.com/search?q=foldkit')
+
+pipe(
+  url,
+  Option.map(u => u.search),
+  Option.flatten,
+  Option.match({
+    onNone: () => 'No search params',
+    onSome: (search) => `Search params: ${search}`
+  })
+)
+// => 'Search params: q=foldkit'
+```
+
+### Extracting Query Parameters
+
+Combine with `URLSearchParams` for query parameter parsing:
+
+```typescript
+import { Url } from 'foldkit'
+import { Option, pipe } from 'effect'
+
+const getQueryParam = (url: Url, key: string): Option.Option<string> => {
+  return pipe(
+    url.search,
+    Option.map(search => new URLSearchParams(search)),
+    Option.flatMap(params => {
+      const value = params.get(key)
+      return value ? Option.some(value) : Option.none()
+    })
+  )
+}
+
+const url = Url.fromString('https://example.com/search?q=foldkit&page=2')
+
+pipe(
+  url,
+  Option.flatMap(u => getQueryParam(u, 'page')),
+  Option.map(page => parseInt(page, 10))
+)
+// => Option.some(2)
+```
+
+### Building URLs
+
+Construct `Url` objects programmatically:
+
+```typescript
+import { Url } from 'foldkit'
+import { Option } from 'effect'
+
+const buildApiUrl = (path: string, params?: Record<string, string>): Url => {
+  const search = params
+    ? Option.some(new URLSearchParams(params).toString())
+    : Option.none()
+
+  return {
+    protocol: 'https:',
+    host: 'api.example.com',
+    port: Option.none(),
+    pathname: path,
+    search,
+    hash: Option.none()
+  }
+}
+
+const url = buildApiUrl('/users/123', { include: 'posts' })
+Url.toString(url)
+// => 'https://api.example.com/users/123?include=posts'
+```
+
+### Modifying URLs
+
+Create modified copies of URLs:
+
+```typescript
+import { Url } from 'foldkit'
+import { Option } from 'effect'
+
+const addQueryParam = (
+  url: Url,
+  key: string,
+  value: string
+): Url => {
+  const params = new URLSearchParams(
+    Option.getOrElse(url.search, () => '')
+  )
+  params.set(key, value)
+
+  return {
+    ...url,
+    search: Option.some(params.toString())
+  }
+}
+
+const url = Url.fromString('https://example.com/search?q=foldkit')
+
+pipe(
+  url,
+  Option.map(u => addQueryParam(u, 'page', '2')),
+  Option.map(Url.toString)
+)
+// => Option.some('https://example.com/search?q=foldkit&page=2')
+```
+
+### Integration with Route Parsing
+
+The `Url` type is used by Foldkit's route parser:
+
+```typescript
+import { Route, Url } from 'foldkit'
+import { pipe, Option } from 'effect'
+
+// Define routes
+const UserProfile = Route.r('UserProfile', { id: S.String })
+
+const userRouter = pipe(
+  Route.literal('users'),
+  Route.slash(Route.string('id')),
+  Route.mapTo(UserProfile)
+)
+
+const parser = Route.oneOf(userRouter)
+
+// Parse a Url object
+const parseRoute = Route.parseUrlWithFallback(parser, NotFound)
+
+const url = Url.fromString('https://example.com/users/123')
+
+pipe(
+  url,
+  Option.map(parseRoute),
+  Option.getOrElse(() => NotFound({ path: '/users/123' }))
+)
+// => { _tag: 'UserProfile', id: '123' }
+```
+
+### Current URL Access
+
+Access the current page URL in Effects:
+
+```typescript
+import { Url } from 'foldkit'
+import { Effect, Option } from 'effect'
+
+const getCurrentUrl = Effect.sync(() => {
+  return Url.fromString(window.location.href)
+})
+
+const getCurrentPath = Effect.map(
+  getCurrentUrl,
+  Option.map(url => url.pathname)
+)
+
+// Use in commands
+const checkCurrentPage = Effect.gen(function* () {
+  const maybePath = yield* getCurrentPath
+  return Option.match(maybePath, {
+    onNone: () => NavigationError({ message: 'Could not determine current path' }),
+    onSome: (path) => CurrentPathChecked({ path })
+  })
+})
+```
+
+## Validation and Error Handling
+
+### Safe URL Parsing
+
+`fromString` never throws — it returns `Option.none()` for invalid URLs:
+
+```typescript
+import { Url } from 'foldkit'
+import { Option } from 'effect'
+
+const urls = [
+  'https://valid.com/path',
+  'not a url',
+  'http://also-valid.com',
+  '://missing-protocol.com'
+]
+
+const validUrls = urls
+  .map(Url.fromString)
+  .filter(Option.isSome)
+  .map(Option.getOrThrow)
+
+// validUrls contains only successfully parsed URLs
+```
+
+### Handling Parse Failures
+
+```typescript
+import { Url } from 'foldkit'
+import { Option, pipe } from 'effect'
+
+const handleUrl = (urlString: string) => {
+  return pipe(
+    Url.fromString(urlString),
+    Option.match({
+      onNone: () => ({
+        success: false,
+        error: 'Invalid URL format'
+      }),
+      onSome: (url) => ({
+        success: true,
+        path: url.pathname,
+        hasQuery: Option.isSome(url.search)
+      })
+    })
+  )
+}
+```
+
+## Notes
+
+- URLs must be absolute (include protocol and host) to parse successfully
+- The `search` field does not include the leading `?` character
+- The `hash` field does not include the leading `#` character
+- The `pathname` field always includes the leading `/`
+- Empty pathnames default to `/`
+- Port numbers are stored as strings, not numbers
+- Use `Option.match` or `Option.getOrElse` to safely access optional fields
+- The `Url` schema integrates with Effect's validation system

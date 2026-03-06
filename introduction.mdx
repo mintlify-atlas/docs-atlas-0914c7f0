@@ -1,0 +1,199 @@
+---
+title: Introduction
+description: Build beautifully boring frontend applications with Foldkit
+---
+
+# Introduction to Foldkit
+
+Foldkit is an [Elm Architecture](https://guide.elm-lang.org/architecture/) framework for TypeScript, powered by [Effect](https://effect.website/). One Model, one update function, one way to do things. No hooks, no local state, no hidden mutations.
+
+<Warning>
+Foldkit is pre-1.0. APIs may change between minor versions.
+</Warning>
+
+## What is Foldkit?
+
+Foldkit brings the simplicity and reliability of the Elm Architecture to TypeScript. Every Foldkit application follows a single pattern that scales from a counter to a multiplayer game without complexity creep:
+
+- **One Model** — Your entire application state lives in a single Schema-validated data structure
+- **One Update Function** — All state transitions flow through a pure function that takes the current model and a message, returning the new model and any side effects
+- **One View Function** — A pure function that renders your model as HTML
+- **Explicit Side Effects** — Effects are described as Commands, Subscriptions, and Managed Resources—values you return, not callbacks you fire
+
+## Who It's For
+
+Foldkit is for developers who want their architecture to prevent bugs, not just catch them. If you want a single pattern that scales from a counter to a multiplayer game without complexity creep, this is it.
+
+It's not incremental. There's no React interop, no escape hatch from Effect, no way to "just use hooks for this one part." You're all in or you're not.
+
+## Built on Effect
+
+Every Foldkit application is an [Effect](https://effect.website/) program:
+
+- Your **Model** is a [Schema](https://effect.website/docs/schema/introduction/) — validated, type-safe data
+- Your **side effects** are Effect programs — composable, testable, and explicit
+- The **runtime** handles execution — no manual subscription cleanup, no race conditions
+
+If you already know Effect, Foldkit feels natural. If you're new to Effect, Foldkit is a great way to immerse yourself in it.
+
+## Core Architecture
+
+Every Foldkit application follows the same structure:
+
+<Steps>
+  <Step title="Model">
+    Define your application state as an Effect Schema. This is your single source of truth.
+
+    ```typescript
+    import { Schema as S } from 'effect'
+
+    const Model = S.Struct({ count: S.Number })
+    type Model = typeof Model.Type
+    ```
+  </Step>
+
+  <Step title="Message">
+    Define the events that can happen in your application as tagged unions.
+
+    ```typescript
+    import { m } from 'foldkit/message'
+
+    const ClickedIncrement = m('ClickedIncrement')
+    const ClickedDecrement = m('ClickedDecrement')
+
+    const Message = S.Union(ClickedIncrement, ClickedDecrement)
+    type Message = typeof Message.Type
+    ```
+  </Step>
+
+  <Step title="Update">
+    Handle every message with a pure function that returns the next model and any commands to execute.
+
+    ```typescript
+    import { Match as M } from 'effect'
+    import { Command } from 'foldkit/command'
+
+    const update = (
+      model: Model,
+      message: Message,
+    ): [Model, ReadonlyArray<Command<Message>>] =>
+      M.value(message).pipe(
+        M.withReturnType<[Model, ReadonlyArray<Command<Message>>]>(),
+        M.tagsExhaustive({
+          ClickedIncrement: () => [{ count: model.count + 1 }, []],
+          ClickedDecrement: () => [{ count: model.count - 1 }, []],
+        }),
+      )
+    ```
+  </Step>
+
+  <Step title="View">
+    Render your model as HTML using the virtual DOM.
+
+    ```typescript
+    import { html } from 'foldkit/html'
+
+    const { div, button, OnClick } = html<Message>()
+
+    const view = (model: Model): Html =>
+      div([], [
+        div([], [model.count.toString()]),
+        button([OnClick(ClickedIncrement())], ['+']),
+        button([OnClick(ClickedDecrement())], ['-']),
+      ])
+    ```
+  </Step>
+
+  <Step title="Runtime">
+    Wire everything together and run your application.
+
+    ```typescript
+    import { Runtime } from 'foldkit'
+
+    const init = () => [{ count: 0 }, []]
+
+    const element = Runtime.makeElement({
+      Model,
+      init,
+      update,
+      view,
+      container: document.getElementById('root')!,
+    })
+
+    Runtime.run(element)
+    ```
+  </Step>
+</Steps>
+
+## What Ships With Foldkit
+
+Foldkit is a complete system, not a collection of libraries you stitch together:
+
+<CardGroup cols={2}>
+  <Card title="Commands" icon="bolt">
+    Side effects are described as Effects that return Messages. Use any Effect combinator—retry, timeout, race, parallel. You write the Effect, the runtime runs it.
+  </Card>
+
+  <Card title="Routing" icon="route">
+    Type-safe bidirectional routing. URLs parse into typed routes and routes build back into URLs. No string matching, no mismatches between parsing and building.
+  </Card>
+
+  <Card title="Subscriptions" icon="tower-broadcast">
+    Declare which streams your app needs as a function of the Model. The runtime diffs and switches them when the Model changes.
+  </Card>
+
+  <Card title="Managed Resources" icon="plug">
+    Model-driven lifecycle for long-lived browser resources like WebSockets, AudioContext, and RTCPeerConnection. Acquire on state change, release on cleanup.
+  </Card>
+
+  <Card title="UI Components" icon="grid">
+    Dialog, menu, tabs, listbox, disclosure—fully accessible primitives that are easy to style and customize.
+  </Card>
+
+  <Card title="Field Validation" icon="circle-check">
+    Per-field validation state modeled as a discriminated union. Define rules as data, apply them in update, and the Model tracks the result.
+  </Card>
+
+  <Card title="Virtual DOM" icon="window">
+    Declarative Views powered by Snabbdom. Fast, keyed diffing. Views are plain functions of your Model.
+  </Card>
+
+  <Card title="HMR" icon="fire">
+    Vite plugin with state-preserving hot module replacement. Change your view, keep your state.
+  </Card>
+</CardGroup>
+
+## Correctness You (And Your LLM) Can See
+
+Every state change flows through one update function. Every side effect is declared explicitly—in Commands, Subscription streams, and Managed Resource lifecycles. You don't have to hold a mental model of what runs when—you can point at it.
+
+This is what makes Foldkit unusually AI-friendly. The same property that makes the code easy for humans to reason about makes it easy for LLMs to generate and review. The architecture makes correctness visible, whether the reader is a person or an LLM.
+
+## Learn by Example
+
+Foldkit includes a comprehensive set of examples that demonstrate real-world patterns:
+
+- **Counter** — Increment/decrement with reset
+- **Stopwatch** — Timer with start/stop/reset
+- **Weather** — HTTP requests with async state handling
+- **Todo** — CRUD operations with localStorage persistence
+- **Form** — Form validation with async email checking
+- **Routing** — URL routing with parser combinators
+- **Shopping Cart** — Nested models and complex state
+- **Snake** — Classic game built with Subscriptions
+- **WebSocket Chat** — Managed Resources with WebSocket integration
+- **Auth** — Authentication flow with model-as-union
+- **Query Sync** — URL query parameter sync with filtering and sorting
+- **Typing Game** — Multiplayer typing game with Effect RPC backend
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Get started with create-foldkit-app
+  </Card>
+
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first Foldkit application
+  </Card>
+</CardGroup>

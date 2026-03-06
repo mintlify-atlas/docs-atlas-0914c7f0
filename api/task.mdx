@@ -1,0 +1,593 @@
+---
+title: Task
+description: Effectful operations for DOM manipulation, timing, and browser APIs
+---
+
+The task module provides Effect-based utilities for interacting with the DOM, managing time, generating random numbers, and controlling browser behavior.
+
+## Overview
+
+Tasks in Foldkit are Effect operations that perform side effects and can be composed, transformed, and sequenced using Effect's combinators. All tasks use `requestAnimationFrame` where appropriate to ensure DOM operations happen after rendering.
+
+## DOM Manipulation
+
+### focus
+
+Focuses an element matching the given selector.
+
+<ParamField path="selector" type="string" required>
+  CSS selector for the element to focus
+</ParamField>
+
+### Returns
+
+`Effect.Effect<void, ElementNotFound>` - Succeeds when the element is focused, fails if the selector does not match an `HTMLElement`.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+// Focus an input field
+Task.focus('#email-input').pipe(
+  Effect.map(() => FocusedEmail()),
+  Effect.catchAll(() => Effect.succeed(FocusFailed())),
+)
+
+// Focus and ignore errors
+Task.focus('#search-box').pipe(
+  Effect.ignore,
+  Effect.as(NoOp()),
+)
+```
+
+### showModal
+
+Opens a dialog element as a modal using `showModal()`.
+
+<ParamField path="selector" type="string" required>
+  CSS selector for the dialog element
+</ParamField>
+
+### Returns
+
+`Effect.Effect<void, ElementNotFound>` - Succeeds when the modal is shown, fails if the selector does not match an `HTMLDialogElement`.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.showModal('#settings-dialog').pipe(
+  Effect.ignore,
+  Effect.as(NoOp()),
+)
+```
+
+### closeModal
+
+Closes a dialog element using `.close()`.
+
+<ParamField path="selector" type="string" required>
+  CSS selector for the dialog element
+</ParamField>
+
+### Returns
+
+`Effect.Effect<void, ElementNotFound>` - Succeeds when the modal is closed, fails if the selector does not match an `HTMLDialogElement`.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.closeModal('#settings-dialog').pipe(
+  Effect.ignore,
+  Effect.as(NoOp()),
+)
+```
+
+### clickElement
+
+Programmatically clicks an element matching the given selector.
+
+<ParamField path="selector" type="string" required>
+  CSS selector for the element to click
+</ParamField>
+
+### Returns
+
+`Effect.Effect<void, ElementNotFound>` - Succeeds when the element is clicked, fails if the selector does not match an `HTMLElement`.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.clickElement('#submit-button').pipe(
+  Effect.ignore,
+  Effect.as(NoOp()),
+)
+```
+
+### scrollIntoView
+
+Scrolls an element into view using `scrollIntoView({ block: 'nearest' })`.
+
+<ParamField path="selector" type="string" required>
+  CSS selector for the element to scroll to
+</ParamField>
+
+### Returns
+
+`Effect.Effect<void, ElementNotFound>` - Succeeds when the element is scrolled into view, fails if the selector does not match an `HTMLElement`.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.scrollIntoView('#active-item').pipe(
+  Effect.ignore,
+  Effect.as(NoOp()),
+)
+```
+
+### advanceFocus
+
+Focuses the next or previous focusable element in the document relative to a reference element.
+
+<ParamField path="selector" type="string" required>
+  CSS selector for the reference element
+</ParamField>
+
+<ParamField path="direction" type="FocusDirection" required>
+  Direction to advance focus: `'Next'` or `'Previous'`
+</ParamField>
+
+### Returns
+
+`Effect.Effect<void, ElementNotFound>` - Succeeds when focus is advanced, fails if the selector does not match an `HTMLElement`.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+// Move focus forward
+Task.advanceFocus('#current-button', 'Next').pipe(
+  Effect.ignore,
+  Effect.as(NoOp()),
+)
+
+// Move focus backward
+Task.advanceFocus('#current-button', 'Previous').pipe(
+  Effect.ignore,
+  Effect.as(NoOp()),
+)
+```
+
+## Timing
+
+### delay
+
+Waits for the given duration before completing.
+
+<ParamField path="duration" type="Duration.DurationInput" required>
+  Duration to wait (e.g., `'1 second'`, `{ seconds: 2 }`, `1000`)
+</ParamField>
+
+### Returns
+
+`Effect.Effect<void>` - Completes after the specified duration.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+// Delay for 1 second
+Task.delay('1 second').pipe(
+  Effect.as(TimedOut()),
+)
+
+// Debounce example
+Task.delay({ milliseconds: 300 }).pipe(
+  Effect.flatMap(() => fetchResults(query)),
+  Effect.map((results) => GotResults({ results })),
+)
+```
+
+### nextFrame
+
+Completes after two animation frames, ensuring the browser has painted the current state before proceeding.
+
+### Returns
+
+`Effect.Effect<void>` - Completes after two `requestAnimationFrame` calls.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+// Wait for next frame before transitioning
+Task.nextFrame.pipe(
+  Effect.as(FrameAdvanced()),
+)
+
+// Ensure DOM update before animation
+Task.nextFrame.pipe(
+  Effect.flatMap(() => Task.focus('#animated-element')),
+  Effect.as(AnimationStarted()),
+)
+```
+
+### waitForTransitions
+
+Waits for all CSS transitions on an element to complete.
+
+<ParamField path="selector" type="string" required>
+  CSS selector for the element
+</ParamField>
+
+### Returns
+
+`Effect.Effect<void>` - Completes when all transitions finish. Falls back to completing immediately if the element is missing or has no active transitions.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.waitForTransitions('#menu').pipe(
+  Effect.as(TransitionEnded()),
+)
+
+// Chain operations after transition
+Task.waitForTransitions('#modal').pipe(
+  Effect.flatMap(() => Task.focus('#first-input')),
+  Effect.as(ModalReady()),
+)
+```
+
+## Time and Timezone
+
+### getTime
+
+Gets the current UTC time.
+
+### Returns
+
+`Effect.Effect<DateTime.Utc>` - The current UTC time.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.getTime.pipe(
+  Effect.map((utc) => GotTime({ utc })),
+)
+```
+
+### getTimeZone
+
+Gets the system timezone.
+
+### Returns
+
+`Effect.Effect<DateTime.TimeZone>` - The system timezone.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.getTimeZone.pipe(
+  Effect.map((zone) => GotTimeZone({ zone })),
+)
+```
+
+### getZonedTime
+
+Gets the current time in the system timezone.
+
+### Returns
+
+`Effect.Effect<DateTime.Zoned>` - The current zoned time.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.getZonedTime.pipe(
+  Effect.map((zoned) => GotLocalTime({ zoned })),
+)
+```
+
+### getZonedTimeIn
+
+Gets the current time in a specific timezone.
+
+<ParamField path="zoneId" type="string" required>
+  IANA timezone identifier (e.g., `'America/New_York'`, `'Europe/London'`)
+</ParamField>
+
+### Returns
+
+`Effect.Effect<DateTime.Zoned, TimeZoneError>` - The current time in the specified timezone, or fails with `TimeZoneError` if the timezone ID is invalid.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.getZonedTimeIn('America/New_York').pipe(
+  Effect.map((zoned) => GotNYTime({ zoned })),
+  Effect.catchAll(() => Effect.succeed(InvalidTimeZone())),
+)
+```
+
+## Random
+
+### randomInt
+
+Generates a random integer between min (inclusive) and max (exclusive).
+
+<ParamField path="min" type="number" required>
+  Minimum value (inclusive)
+</ParamField>
+
+<ParamField path="max" type="number" required>
+  Maximum value (exclusive)
+</ParamField>
+
+### Returns
+
+`Effect.Effect<number>` - A random integer in the range [min, max).
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+// Roll a six-sided die
+Task.randomInt(1, 7).pipe(
+  Effect.map((value) => GotDiceRoll({ value })),
+)
+
+// Random delay
+Task.randomInt(100, 500).pipe(
+  Effect.flatMap((ms) => Task.delay({ milliseconds: ms })),
+  Effect.as(RandomDelayCompleted()),
+)
+```
+
+## Scroll Lock
+
+### lockScroll
+
+Locks page scroll by setting `overflow: hidden` on the document element. Uses reference counting so nested locks are safe.
+
+### Returns
+
+`Effect.Effect<void>` - Completes when the scroll is locked.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.lockScroll.pipe(
+  Effect.as(NoOp()),
+)
+```
+
+### Features
+
+- Compensates for scrollbar width with padding to prevent layout shift
+- On iOS Safari, intercepts `touchmove` events to prevent page scroll while allowing scrolling within overflow containers
+- Uses reference counting — the page only unlocks when every lock has been released
+
+### unlockScroll
+
+Releases one scroll lock. When the last lock is released, restores the original scroll state.
+
+### Returns
+
+`Effect.Effect<void>` - Completes when the lock is released.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.unlockScroll.pipe(
+  Effect.as(NoOp()),
+)
+```
+
+## Inert Management
+
+### inertOthers
+
+Marks all DOM elements outside the given selectors as `inert` and `aria-hidden="true"`. Uses reference counting so nested calls are safe.
+
+<ParamField path="id" type="string" required>
+  Unique identifier for this inert scope
+</ParamField>
+
+<ParamField path="allowedSelectors" type="ReadonlyArray<string>" required>
+  CSS selectors for elements that should remain interactive
+</ParamField>
+
+### Returns
+
+`Effect.Effect<void>` - Completes when the inert state is applied.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.inertOthers('my-menu', ['#menu-button', '#menu-items']).pipe(
+  Effect.as(NoOp()),
+)
+```
+
+### restoreInert
+
+Restores all elements previously marked inert by `inertOthers` for the given ID.
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the inert scope to restore
+</ParamField>
+
+### Returns
+
+`Effect.Effect<void>` - Completes when the inert state is restored. Safe to call without a preceding `inertOthers` — acts as a no-op.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+Task.restoreInert('my-menu').pipe(
+  Effect.as(NoOp()),
+)
+```
+
+## Element Movement Detection
+
+### detectElementMovement
+
+Detects if an element moves in the viewport. Resolves when movement is detected.
+
+<ParamField path="selector" type="string" required>
+  CSS selector for the element to watch
+</ParamField>
+
+### Returns
+
+`Effect.Effect<void>` - Completes when the element moves. Falls back to completing immediately if the element is missing.
+
+### Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect } from 'effect'
+
+// Close menu when button moves (e.g., during scroll or resize)
+Task.detectElementMovement('#menu-button').pipe(
+  Effect.as(MenuButtonMoved()),
+)
+
+// Race between user action and element movement
+Effect.raceFirst([
+  Task.detectElementMovement('#tooltip-anchor'),
+  Task.delay('5 seconds'),
+]).pipe(
+  Effect.as(TooltipDismissed()),
+)
+```
+
+### Behavior
+
+- Snapshots the element's position via `getBoundingClientRect`
+- Watches for changes using `ResizeObserver` and window `scroll`/`resize` listeners
+- Cleanup runs automatically when the fiber is interrupted (e.g., by `Effect.raceFirst`)
+
+## Error Types
+
+### ElementNotFound
+
+Error indicating that a DOM element matching the given selector was not found.
+
+```typescript
+import { ElementNotFound } from 'foldkit/task'
+
+// Thrown by: focus, showModal, closeModal, clickElement, scrollIntoView, advanceFocus
+```
+
+### TimeZoneError
+
+Error indicating that the given timezone ID is invalid.
+
+```typescript
+import { TimeZoneError } from 'foldkit/task'
+
+// Thrown by: getZonedTimeIn
+```
+
+## Complete Example
+
+```typescript
+import * as Task from 'foldkit/task'
+import { Effect, pipe } from 'effect'
+import { m } from 'foldkit/schema'
+import { Schema as S } from 'effect'
+
+// Messages
+const OpenedModal = m('OpenedModal')
+const ClosedModal = m('ClosedModal')
+const FocusedInput = m('FocusedInput')
+const TransitionCompleted = m('TransitionCompleted')
+const NoOp = m('NoOp')
+
+const Message = S.Union(
+  OpenedModal,
+  ClosedModal,
+  FocusedInput,
+  TransitionCompleted,
+  NoOp,
+)
+type Message = typeof Message.Type
+
+// Commands
+const openModal = pipe(
+  Task.showModal('#settings-modal'),
+  Effect.flatMap(() => Task.lockScroll),
+  Effect.flatMap(() => Task.inertOthers('modal', ['#settings-modal'])),
+  Effect.flatMap(() => Task.nextFrame),
+  Effect.flatMap(() => Task.focus('#first-input')),
+  Effect.flatMap(() => Task.waitForTransitions('#settings-modal')),
+  Effect.as(TransitionCompleted()),
+  Effect.catchAll(() => Effect.succeed(NoOp())),
+)
+
+const closeModal = pipe(
+  Task.closeModal('#settings-modal'),
+  Effect.flatMap(() => Task.restoreInert('modal')),
+  Effect.flatMap(() => Task.unlockScroll),
+  Effect.flatMap(() => Task.waitForTransitions('#settings-modal')),
+  Effect.as(ClosedModal()),
+  Effect.catchAll(() => Effect.succeed(NoOp())),
+)
+
+const scrollToActiveItem = (index: number) =>
+  pipe(
+    Task.scrollIntoView(`#item-${index}`),
+    Effect.ignore,
+    Effect.as(NoOp()),
+  )
+```

@@ -1,97 +1,71 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Foldkit"
+description: "Beautifully boring frontend applications"
 ---
 
-## Setting up
+<Note>Foldkit is pre-1.0. APIs may change between minor versions.</Note>
 
-Get your documentation site up and running in minutes.
+## What is Foldkit?
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+Foldkit is an [Elm Architecture](https://guide.elm-lang.org/architecture/) framework for TypeScript, powered by [Effect](https://effect.website/). One Model, one update function, one way to do things. No hooks, no local state, no hidden mutations.
 
-## Make it yours
+Every Foldkit application is an Effect program. Your Model is a Schema. Side effects are values you return, not callbacks you fire — the runtime handles when and how.
 
-Design a docs site that looks great and empowers your users.
+## Key Features
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Elm Architecture" icon="diagram-project">
+    Model-Update-View pattern with unidirectional data flow
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Effect-TS Powered" icon="bolt">
+    Side effects as first-class values with full Effect ecosystem support
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Type-Safe Routing" icon="route">
+    Bidirectional routing with parser combinators that never go out of sync
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Managed Resources" icon="plug">
+    Model-driven lifecycle for WebSockets, AudioContext, and browser APIs
   </Card>
-</Columns>
+  <Card title="UI Components" icon="window">
+    Accessible primitives like Dialog, Menu, Tabs, and Listbox
+  </Card>
+  <Card title="Field Validation" icon="check-circle">
+    Per-field validation with discriminated unions
+  </Card>
+</CardGroup>
 
-## Create beautiful pages
+## Get Started
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Set up a new Foldkit project with create-foldkit-app
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first Foldkit application in minutes
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/architecture">
+    Learn the Elm Architecture pattern and how Foldkit works
+  </Card>
+  <Card title="Examples" icon="code" href="/examples/counter">
+    Explore real-world examples from counter to multiplayer games
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Why Foldkit?
 
-## Need inspiration?
+Foldkit is for developers who want their architecture to prevent bugs, not just catch them. If you want a single pattern that scales from a counter to a multiplayer game without complexity creep, this is it.
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+It's not incremental. There's no React interop, no escape hatch from Effect, no way to "just use hooks for this one part." You're all in or you're not.
+
+## What Ships With Foldkit
+
+Foldkit is a complete system, not a collection of libraries you stitch together:
+
+- **Commands** — Side effects as Effects that return Messages
+- **Routing** — Type-safe bidirectional routing with parser combinators
+- **Subscriptions** — Model-driven streams that the runtime manages
+- **Managed Resources** — Lifecycle management for browser APIs
+- **UI Components** — Accessible primitives that are easy to style
+- **Field Validation** — Per-field validation state as discriminated unions
+- **Virtual DOM** — Declarative views powered by Snabbdom
+- **HMR** — State-preserving hot module replacement with Vite

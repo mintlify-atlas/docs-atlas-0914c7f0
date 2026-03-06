@@ -1,0 +1,298 @@
+---
+title: Command
+description: Side effect system for Foldkit applications using Effect-TS
+---
+
+Commands are Effects that produce messages. They represent side effects in your Foldkit application, such as HTTP requests, timers, local storage access, or any asynchronous operation. Commands are returned from `init` and `update` functions and are executed by the runtime.
+
+## Command Type
+
+A Command is an Effect that produces a message:
+
+```typescript
+import { Effect, Schema } from 'effect'
+
+type Command<T, E = never, R = never> = Effect.Effect<
+  T extends Schema.Schema.Any ? Schema.Schema.Type<T> : T,
+  E,
+  R
+>
+```
+
+### Type Parameters
+
+<ParamField path="T" type="Message type" required>
+  The message type that this command produces. Can be a Schema or a plain TypeScript type.
+</ParamField>
+
+<ParamField path="E" type="Error type" default="never">
+  The error type. In practice, commands should catch errors and convert them to messages, so this is typically `never`.
+</ParamField>
+
+<ParamField path="R" type="Requirements" default="never">
+  The Effect context requirements. Use this to declare dependencies on services like HttpClient or custom resources.
+</ParamField>
+
+## Creating Commands
+
+Commands are just Effects that return messages. Use Effect's full API to create them:
+
+### Simple Commands
+
+```typescript
+import { Effect } from 'effect'
+import { Command } from 'foldkit/command'
+
+// Command that immediately produces a message
+const noOp: Command<typeof NoOp> = Effect.succeed(NoOp())
+
+// Command that delays before producing a message
+const delayedMessage: Command<typeof Tick> = Effect.gen(function* () {
+  yield* Effect.sleep('1 second')
+  return Tick()
+})
+```
+
+### HTTP Requests
+
+```typescript
+import { Effect } from 'effect'
+import { HttpClient } from '@effect/platform'
+import { Command } from 'foldkit/command'
+
+const fetchUser = (
+  userId: string
+): Command<typeof ReceivedUser | typeof FailedToFetchUser, never, HttpClient> =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient
+    const response = yield* client.get(`/api/users/${userId}`)
+    const user = yield* response.json
+    return ReceivedUser({ user })
+  }).pipe(
+    Effect.catchAll(error =>
+      Effect.succeed(FailedToFetchUser({ error: String(error) }))
+    )
+  )
+```
+
+### Browser APIs
+
+```typescript
+import { Effect } from 'effect'
+import { Command } from 'foldkit/command'
+
+// Focus an element
+const focusInput = (id: string): Command<typeof NoOp> =>
+  Effect.sync(() => {
+    const element = document.getElementById(id)
+    element?.focus()
+    return NoOp()
+  })
+
+// Copy to clipboard
+const copyToClipboard = (
+  text: string
+): Command<typeof CopiedToClipboard | typeof FailedToCopy> =>
+  Effect.tryPromise({
+    try: () => navigator.clipboard.writeText(text),
+    catch: error => new Error(String(error)),
+  }).pipe(
+    Effect.map(() => CopiedToClipboard()),
+    Effect.catchAll(error =>
+      Effect.succeed(FailedToCopy({ error: error.message }))
+    )
+  )
+```
+
+### Local Storage
+
+```typescript
+import { Effect } from 'effect'
+import { KeyValueStore } from '@effect/platform'
+import { BrowserKeyValueStore } from '@effect/platform-browser'
+import { Command } from 'foldkit/command'
+
+const saveToStorage = (
+  key: string,
+  value: string
+): Command<typeof Saved | typeof FailedToSave> =>
+  Effect.gen(function* () {
+    const store = yield* KeyValueStore.KeyValueStore
+    yield* store.set(key, value)
+    return Saved()
+  }).pipe(
+    Effect.catchAll(error =>
+      Effect.succeed(FailedToSave({ error: String(error) }))
+    ),
+    Effect.provide(BrowserKeyValueStore.layerLocalStorage)
+  )
+
+const loadFromStorage = (
+  key: string
+): Command<typeof Loaded | typeof FailedToLoad> =>
+  Effect.gen(function* () {
+    const store = yield* KeyValueStore.KeyValueStore
+    const maybeValue = yield* store.get(key)
+    const value = yield* maybeValue
+    return Loaded({ value })
+  }).pipe(
+    Effect.catchAll(error =>
+      Effect.succeed(FailedToLoad({ error: String(error) }))
+    ),
+    Effect.provide(BrowserKeyValueStore.layerLocalStorage)
+  )
+```
+
+## Returning Commands
+
+Commands are returned as arrays from `init` and `update` functions:
+
+```typescript
+const init = (): [Model, ReadonlyArray<Command<Message>>] => {
+  return [
+    { status: 'loading' },
+    [fetchInitialData()],
+  ]
+}
+
+const update = (model: Model, message: Message): [Model, ReadonlyArray<Command<Message>>] => {
+  return M.value(message).pipe(
+    M.when({ _tag: 'ClickedRefresh' }, () => [
+      { ...model, status: 'loading' },
+      [fetchData()],
+    ]),
+    M.when({ _tag: 'ClickedSave' }, () => [
+      model,
+      [saveData(model.data), showNotification('Saving...')],
+    ]),
+    M.exhaustive
+  )
+}
+```
+
+## Error Handling
+
+Always catch errors in commands and convert them to messages. Uncaught errors will crash the application and display the error view.
+
+```typescript
+// Bad: Errors can crash the app
+const badCommand: Command<typeof Success> =
+  Effect.tryPromise(() => fetch('/api/data'))
+    .pipe(Effect.map(() => Success()))
+
+// Good: Errors become messages
+const goodCommand: Command<typeof Success | typeof Failed> =
+  Effect.tryPromise({
+    try: () => fetch('/api/data'),
+    catch: error => new Error(String(error)),
+  }).pipe(
+    Effect.map(() => Success()),
+    Effect.catchAll(error =>
+      Effect.succeed(Failed({ error: error.message }))
+    )
+  )
+```
+
+## Command Composition
+
+Compose multiple commands using Effect's combinators:
+
+```typescript
+import { Effect, Array } from 'effect'
+
+// Run commands in sequence
+const sequentialCommands: Command<Message> = Effect.gen(function* () {
+  const result1 = yield* command1
+  const result2 = yield* command2
+  return FinalMessage({ result1, result2 })
+})
+
+// Run commands in parallel
+const parallelCommands: Command<Message> = Effect.gen(function* () {
+  const [result1, result2] = yield* Effect.all([command1, command2])
+  return FinalMessage({ result1, result2 })
+})
+
+// Map over command results
+const mappedCommand: Command<typeof Transformed> =
+  originalCommand.pipe(
+    Effect.map(message => Transformed({ data: message.data.toUpperCase() }))
+  )
+```
+
+## Resources and Dependencies
+
+Commands can require services from the Effect context:
+
+```typescript
+import { HttpClient } from '@effect/platform'
+import { Effect, Layer } from 'effect'
+import { Command } from 'foldkit/command'
+
+// Command requiring HttpClient
+const fetchData: Command<Message, never, HttpClient> = Effect.gen(function* () {
+  const client = yield* HttpClient.HttpClient
+  const response = yield* client.get('/api/data')
+  const data = yield* response.json
+  return ReceivedData({ data })
+})
+
+// Provide resources in makeApplication
+const app = Runtime.makeApplication({
+  Model,
+  init,
+  update,
+  view,
+  container: document.getElementById('root')!,
+  resources: HttpClient.layer,
+})
+```
+
+## No-Op Commands
+
+Sometimes you need to return a command that does nothing:
+
+```typescript
+const NoOp = m('NoOp')
+
+const noOpCommand: Command<typeof NoOp> = Effect.succeed(NoOp())
+
+// In update
+const update = (model: Model, message: Message) => {
+  return M.value(message).pipe(
+    M.when({ _tag: 'NoOp' }, () => [model, []]),
+    // ... other cases
+  )
+}
+```
+
+## Testing Commands
+
+Commands are just Effects, so you can test them using Effect's testing utilities:
+
+```typescript
+import { Effect } from 'effect'
+import { expect, test } from 'vitest'
+
+test('fetchUser returns success message', async () => {
+  const command = fetchUser('123')
+  const result = await Effect.runPromise(command)
+  
+  expect(result._tag).toBe('ReceivedUser')
+  expect(result.user).toBeDefined()
+})
+```
+
+## Best Practices
+
+1. **Always handle errors**: Convert all errors to messages using `Effect.catchAll`
+
+2. **Keep commands pure**: Commands should not mutate global state directly. Return messages that update the model.
+
+3. **Type command return values**: Use union types to specify all possible messages a command can produce
+
+4. **Don't suffix with "Command"**: Name commands by what they do: `fetchUser` not `fetchUserCommand`
+
+5. **Use Effect.gen for readability**: For multi-step async operations, use `Effect.gen` instead of chaining `.pipe`
+
+6. **Provide resources at the runtime level**: Use the `resources` config field instead of providing layers per-command

@@ -1,0 +1,177 @@
+---
+title: Counter
+description: A simple counter application demonstrating the basics of Foldkit
+---
+
+The Counter example is a minimal Foldkit application that demonstrates the core concepts of the Elm Architecture: Model, Message, Update, and View.
+
+## What You'll Learn
+
+- Setting up a basic Foldkit element
+- Defining a model and messages
+- Handling user interactions
+- Updating state immutably
+- Rendering views with the HTML DSL
+
+## Live Demo
+
+Try the counter example:
+
+<Card title="Counter Demo" icon="play" href="https://foldkit.dev/examples/counter">
+  Click to see the live counter example
+</Card>
+
+## Complete Code
+
+```typescript
+import { Match as M, Schema as S } from 'effect'
+import { Runtime } from 'foldkit'
+import { Command } from 'foldkit/command'
+import { Html, html } from 'foldkit/html'
+import { m } from 'foldkit/message'
+
+// MODEL
+
+const Model = S.Struct({ count: S.Number })
+type Model = typeof Model.Type
+
+// MESSAGE
+
+const ClickedDecrement = m('ClickedDecrement')
+const ClickedIncrement = m('ClickedIncrement')
+const ClickedReset = m('ClickedReset')
+
+const Message = S.Union(ClickedDecrement, ClickedIncrement, ClickedReset)
+export type Message = typeof Message.Type
+
+// UPDATE
+
+const update = (
+  model: Model,
+  message: Message,
+): [Model, ReadonlyArray<Command<Message>>] =>
+  M.value(message).pipe(
+    M.withReturnType<[Model, ReadonlyArray<Command<Message>>]>(),
+    M.tagsExhaustive({
+      ClickedDecrement: () => [{ count: model.count - 1 }, []],
+      ClickedIncrement: () => [{ count: model.count + 1 }, []],
+      ClickedReset: () => [{ count: 0 }, []],
+    }),
+  )
+
+// INIT
+
+const init: Runtime.ElementInit<Model, Message> = () => [{ count: 0 }, []]
+
+// VIEW
+
+const { div, button, Class, OnClick } = html<Message>()
+
+const view = (model: Model): Html =>
+  div(
+    [
+      Class(
+        'min-h-screen bg-white flex flex-col items-center justify-center gap-6 p-6',
+      ),
+    ],
+    [
+      div(
+        [Class('text-6xl font-bold text-gray-800')],
+        [model.count.toString()],
+      ),
+      div(
+        [Class('flex flex-wrap justify-center gap-4')],
+        [
+          button([OnClick(ClickedDecrement()), Class(buttonStyle)], ['-']),
+          button([OnClick(ClickedReset()), Class(buttonStyle)], ['Reset']),
+          button([OnClick(ClickedIncrement()), Class(buttonStyle)], ['+']),
+        ],
+      ),
+    ],
+  )
+
+const buttonStyle = 'bg-black text-white hover:bg-gray-700 px-4 py-2 transition'
+
+// RUN
+
+const element = Runtime.makeElement({
+  Model,
+  init,
+  update,
+  view,
+  container: document.getElementById('root')!,
+})
+
+Runtime.run(element)
+```
+
+## Key Concepts
+
+### Model
+
+The model holds the application state. In this case, just a count:
+
+```typescript
+const Model = S.Struct({ count: S.Number })
+```
+
+### Messages
+
+Messages represent events that can happen in your application:
+
+```typescript
+const ClickedDecrement = m('ClickedDecrement')
+const ClickedIncrement = m('ClickedIncrement')
+const ClickedReset = m('ClickedReset')
+```
+
+### Update Function
+
+The update function handles messages and returns a new model:
+
+```typescript
+const update = (model: Model, message: Message) =>
+  M.value(message).pipe(
+    M.tagsExhaustive({
+      ClickedDecrement: () => [{ count: model.count - 1 }, []],
+      ClickedIncrement: () => [{ count: model.count + 1 }, []],
+      ClickedReset: () => [{ count: 0 }, []],
+    }),
+  )
+```
+
+Each handler returns a tuple of `[newModel, commands]`. Since this example has no side effects, the commands array is always empty.
+
+### View Function
+
+The view function renders the UI based on the current model:
+
+```typescript
+const view = (model: Model): Html =>
+  div(
+    [Class('...')],
+    [
+      div([Class('...')], [model.count.toString()]),
+      // ... buttons
+    ],
+  )
+```
+
+## Source Code
+
+View the complete source code on GitHub:
+
+<Card title="counter/src/main.ts" icon="github" href="https://github.com/foldkit/foldkit/tree/main/examples/counter/src/main.ts">
+  View on GitHub
+</Card>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Stopwatch" icon="clock" href="/examples/stopwatch">
+    Learn about subscriptions and time-based updates
+  </Card>
+  <Card title="Todo" icon="check" href="/examples/todo">
+    Build a more complex application with local storage
+  </Card>
+</CardGroup>

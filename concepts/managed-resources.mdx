@@ -1,0 +1,405 @@
+---
+title: Managed Resources
+description: Acquire and release stateful resources tied to model state with automatic lifecycle management
+---
+
+Managed resources are model-driven resources with acquire/release lifecycle. They exist only while the model is in a particular state — a camera stream during a video call, a WebSocket connection on a chat page, or an audio context during playback.
+
+## When to Use Managed Resources
+
+Use managed resources for:
+
+- **Browser APIs with cleanup** — MediaStream, AudioContext, WebSocket, RTCPeerConnection
+- **Expensive resources** — Web Workers, large canvas contexts, 3D renderers
+- **Stateful connections** — Database connections, persistent WebSocket links
+- **Resources tied to routes** — Page-specific API connections
+
+For resources that live for the entire application lifetime (HTTP client, JSON encoder), use the static `resources` config instead.
+
+## Basic Managed Resource
+
+Define a managed resource in three steps:
+
+<Steps>
+
+### Create the Resource Tag
+
+```typescript
+import { ManagedResource } from 'foldkit'
+
+const CameraStream = ManagedResource.tag<MediaStream>()('CameraStream')
+```
+
+The tag is an identity used in:
+- The Effect `R` channel (type-level enforcement)
+- Commands that access the resource via `.get`
+
+### Define the Configuration
+
+```typescript packages/examples/typing-game/client/src/managedResource.ts
+import { Effect, Option, Schema as S, pipe } from 'effect'
+import { ManagedResource } from 'foldkit'
+
+const ManagedResourceDeps = S.Struct({
+  camera: S.Option(
+    S.Struct({
+      facingMode: S.Literal('user', 'environment'),
+    }),
+  ),
+})
+
+const managedResources = ManagedResource.makeManagedResources(
+  ManagedResourceDeps,
+)<Model, Message>({
+  camera: {
+    resource: CameraStream,
+    modelToMaybeRequirements: model =>
+      pipe(
+        model.callState,
+        Option.liftPredicate(
+          (state): state is typeof InCall.Type => state._tag === 'InCall',
+        ),
+        Option.map(state => ({ facingMode: state.facingMode })),
+      ),
+    acquire: ({ facingMode }) =>
+      Effect.tryPromise(() =>
+        navigator.mediaDevices.getUserMedia({ video: { facingMode } }),
+      ),
+    release: stream =>
+      Effect.sync(() => stream.getTracks().forEach(track => track.stop())),
+    onAcquired: stream => AcquiredCamera({ stream }),
+    onAcquireError: error => FailedToAcquireCamera({ error: String(error) }),
+    onReleased: () => ReleasedCamera(),
+  },
+})
+```
+
+### Pass to Runtime
+
+```typescript
+import { Runtime } from 'foldkit'
+
+const app = Runtime.makeApplication({
+  Model,
+  init,
+  update,
+  view,
+  managedResources,
+  container: document.getElementById('root')!,
+})
+```
+
+</Steps>
+
+## Managed Resource Lifecycle
+
+The runtime watches `modelToMaybeRequirements` after every update:
+
+<Steps>
+
+### None → Some
+
+When requirements change from `Option.none()` to `Option.some(params)`:
+
+1. Runtime calls `acquire(params)`
+2. If successful, dispatches `onAcquired(value)`
+3. If failed, dispatches `onAcquireError(error)`
+4. Resource is now available via `.get`
+
+### Some → Some (Different)
+
+When requirements change from `Option.some(paramsA)` to `Option.some(paramsB)` and they're structurally different:
+
+1. Runtime calls `release(oldValue)`
+2. After release completes, dispatches `onReleased()`
+3. Runtime calls `acquire(paramsB)`
+4. Dispatches `onAcquired(newValue)` or `onAcquireError(error)`
+
+### Some → None
+
+When requirements change from `Option.some(params)` to `Option.none()`:
+
+1. Runtime calls `release(value)`
+2. After release completes, dispatches `onReleased()`
+3. Resource is no longer accessible
+
+### Some → Some (Same)
+
+When requirements are structurally equivalent:
+
+- No acquire or release occurs
+- Existing resource continues running
+
+</Steps>
+
+## Accessing Managed Resources
+
+Use the resource's `.get` in commands:
+
+```typescript
+import { Effect } from 'effect'
+import { Command } from 'foldkit/command'
+import { ManagedResource } from 'foldkit'
+
+const capturePhoto = (): Command<
+  typeof CapturedPhoto | typeof CameraNotAvailable,
+  never,
+  ManagedResource.ServiceOf<typeof CameraStream>
+> =>
+  Effect.gen(function* () {
+    const stream = yield* CameraStream.get
+    const video = document.createElement('video')
+    video.srcObject = stream
+    yield* Effect.promise(() => video.play())
+    
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')!
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    context.drawImage(video, 0, 0)
+    
+    const dataUrl = canvas.toDataURL('image/png')
+    return CapturedPhoto({ dataUrl })
+  }).pipe(
+    Effect.catchTag('ResourceNotAvailable', () =>
+      Effect.succeed(CameraNotAvailable()),
+    ),
+  )
+```
+
+If the resource isn't acquired, `.get` fails with `ResourceNotAvailable`. Always catch this error.
+
+## Resource Requirements Schema
+
+### Option for Optional Resources
+
+Most resources use `S.Option(...)` because they're conditionally needed:
+
+```typescript
+const ManagedResourceDeps = S.Struct({
+  camera: S.Option(S.Struct({ facingMode: S.String })),
+})
+
+modelToMaybeRequirements: model =>
+  model.isRecording
+    ? Option.some({ facingMode: 'user' })
+    : Option.none()
+```
+
+### Parameterless Resources
+
+For resources with no configuration, use `S.Option(S.Null)`:
+
+```typescript
+const ManagedResourceDeps = S.Struct({
+  audioContext: S.Option(S.Null),
+})
+
+modelToMaybeRequirements: model =>
+  model.isPlayingAudio ? Option.some(null) : Option.none()
+```
+
+<Warning>
+**Don't use `S.Option(S.Struct({}))`** — An empty struct has no fields, so all values are equivalent. This prevents the runtime from detecting changes.
+</Warning>
+
+### Always-Acquired Resources
+
+For resources that should always be acquired (rare), omit `Option`:
+
+```typescript
+const ManagedResourceDeps = S.Struct({
+  database: S.Struct({ connectionString: S.String }),
+})
+
+modelToMaybeRequirements: model => ({
+  connectionString: model.dbUrl,
+})
+```
+
+## Acquire and Release Signatures
+
+### Acquire
+
+`acquire` receives the unwrapped params (without `Option`):
+
+```typescript
+acquire: (params: { facingMode: string }) => Effect.Effect<MediaStream, unknown>
+```
+
+Return the resource value in the success channel. If acquisition fails, return an error in the error channel — it flows to `onAcquireError`.
+
+### Release
+
+`release` receives the acquired value and should clean up:
+
+```typescript
+release: (stream: MediaStream) => Effect.Effect<void>
+```
+
+<Note>
+**Release must not throw** — Errors in `release` are silently swallowed to prevent blocking cleanup. Make release operations infallible.
+</Note>
+
+## Message Handlers
+
+### onAcquired
+
+Called when `acquire` succeeds. Receives the acquired value:
+
+```typescript
+onAcquired: (stream: MediaStream) => AcquiredCamera({ stream })
+```
+
+Use this to store the resource in the model if needed:
+
+```typescript
+M.tagsExhaustive({
+  AcquiredCamera: ({ stream }) => [
+    evo(model, { cameraStream: () => Option.some(stream) }),
+    [],
+  ],
+})
+```
+
+### onAcquireError
+
+Called when `acquire` fails. Receives the error:
+
+```typescript
+onAcquireError: (error: unknown) =>
+  FailedToAcquireCamera({ error: String(error) })
+```
+
+Handle the error in update:
+
+```typescript
+M.tagsExhaustive({
+  FailedToAcquireCamera: ({ error }) => [
+    evo(model, {
+      errorMessage: () => Option.some(`Camera error: ${error}`),
+      isRecording: () => false,
+    }),
+    [],
+  ],
+})
+```
+
+### onReleased
+
+Called after `release` completes. No parameters:
+
+```typescript
+onReleased: () => ReleasedCamera()
+```
+
+Use this to clean up model state:
+
+```typescript
+M.tagsExhaustive({
+  ReleasedCamera: () => [
+    evo(model, { cameraStream: () => Option.none() }),
+    [],
+  ],
+})
+```
+
+## Multiple Managed Resources
+
+Define multiple resources in the same config:
+
+```typescript
+const AudioContext = ManagedResource.tag<AudioContext>()('AudioContext')
+const CameraStream = ManagedResource.tag<MediaStream>()('CameraStream')
+const WebSocketConnection = ManagedResource.tag<WebSocket>()('WebSocket')
+
+const ManagedResourceDeps = S.Struct({
+  audio: S.Option(S.Null),
+  camera: S.Option(S.Struct({ facingMode: S.String })),
+  websocket: S.Option(S.Struct({ url: S.String })),
+})
+
+const managedResources = ManagedResource.makeManagedResources(
+  ManagedResourceDeps,
+)<Model, Message>({
+  audio: {
+    resource: AudioContext,
+    modelToMaybeRequirements: model =>
+      model.isPlayingAudio ? Option.some(null) : Option.none(),
+    acquire: () => Effect.sync(() => new window.AudioContext()),
+    release: ctx => Effect.promise(() => ctx.close()),
+    onAcquired: () => AcquiredAudio(),
+    onAcquireError: error => FailedToAcquireAudio({ error: String(error) }),
+    onReleased: () => ReleasedAudio(),
+  },
+  
+  camera: {
+    resource: CameraStream,
+    // ... camera config
+  },
+  
+  websocket: {
+    resource: WebSocketConnection,
+    // ... websocket config
+  },
+})
+```
+
+Each resource has independent lifecycle — changes to one don't affect the others.
+
+## Type-Level Enforcement
+
+The service type appears in the Effect `R` channel:
+
+```typescript
+const capturePhoto = (): Command<
+  Message,
+  never,
+  ManagedResource.ServiceOf<typeof CameraStream>
+> => /* ... */
+```
+
+If you try to use a resource that's not registered, TypeScript will error:
+
+```typescript
+// ❌ Type error: MicrophoneStream not in ManagedResourceServices
+const recordAudio = (): Command<Message, never, ManagedResource.ServiceOf<typeof MicrophoneStream>> =>
+  // ...
+```
+
+This prevents runtime errors from accessing unregistered resources.
+
+## Managed Resources vs Static Resources
+
+<CardGroup cols={2}>
+  <Card title="Managed Resources" icon="plug">
+    **Model-driven lifecycle**
+    
+    - Acquired when model changes
+    - Released when model changes
+    - MediaStream, WebSocket, AudioContext
+    - Expensive, stateful resources
+  </Card>
+  
+  <Card title="Static Resources" icon="layer-group">
+    **Application lifetime**
+    
+    - Created at startup
+    - Never released
+    - HTTP client, logger, config
+    - Stateless utilities
+  </Card>
+</CardGroup>
+
+Use managed resources when the resource should only exist in certain states. Use static resources for services needed throughout the app.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Commands" icon="terminal" href="/concepts/commands">
+    Access resources in commands
+  </Card>
+  <Card title="Subscriptions" icon="arrows-rotate" href="/concepts/subscriptions">
+    Stream events from resources
+  </Card>
+</CardGroup>

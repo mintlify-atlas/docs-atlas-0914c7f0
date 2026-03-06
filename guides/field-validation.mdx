@@ -1,0 +1,508 @@
+---
+title: "Field Validation"
+description: "Learn how to validate form fields with type-safe validation rules"
+---
+
+## Overview
+
+Foldkit's field validation system provides a type-safe way to validate form inputs with real-time feedback. It uses a state machine approach with four distinct states: `NotValidated`, `Validating`, `Valid`, and `Invalid`.
+
+## Creating a Field
+
+Use `makeField()` to create a field validator for any value type:
+
+```typescript
+import { Schema as S } from 'effect'
+import { makeField } from 'foldkit/fieldValidation'
+
+const StringField = makeField(S.String)
+type StringField = typeof StringField.Union.Type
+
+const NumberField = makeField(S.Number)
+type NumberField = typeof NumberField.Union.Type
+```
+
+The `makeField()` function returns an object with:
+- **State constructors**: `NotValidated`, `Validating`, `Valid`, `Invalid`
+- **Union schema**: `Union` — all possible states
+- **Validators**: `validate()`, `validateAll()`
+
+## Field States
+
+Each field goes through a lifecycle:
+
+```typescript
+// Initial state - not yet validated
+StringField.NotValidated({ value: '' })
+
+// Async validation in progress
+StringField.Validating({ value: 'user@example.com' })
+
+// Validation passed
+StringField.Valid({ value: 'user@example.com' })
+
+// Validation failed
+StringField.Invalid({ 
+  value: 'invalid', 
+  errors: ['Invalid email address'] 
+})
+```
+
+## Model Setup
+
+Include fields in your model schema:
+
+```typescript
+import { Schema as S } from 'effect'
+import { makeField } from 'foldkit/fieldValidation'
+
+const StringField = makeField(S.String)
+
+const Model = S.Struct({
+  name: StringField.Union,
+  email: StringField.Union,
+  age: NumberField.Union
+})
+
+type Model = typeof Model.Type
+
+const init = (): [Model, ReadonlyArray<Command<Message>>] => [
+  {
+    name: StringField.NotValidated({ value: '' }),
+    email: StringField.NotValidated({ value: '' }),
+    age: NumberField.NotValidated({ value: 0 })
+  },
+  []
+]
+```
+
+## Validation Rules
+
+Foldkit provides built-in validators for common cases.
+
+### String Validators
+
+```typescript
+import { FieldValidation } from 'foldkit'
+
+const nameValidations = [
+  FieldValidation.required('Name is required'),
+  FieldValidation.minLength(2, 'Name must be at least 2 characters'),
+  FieldValidation.maxLength(50, 'Name must be less than 50 characters')
+]
+
+const emailValidations = [
+  FieldValidation.required(),
+  FieldValidation.email('Please enter a valid email address')
+]
+
+const urlValidations = [
+  FieldValidation.url('Please enter a valid URL')
+]
+
+const usernameValidations = [
+  FieldValidation.startsWith('@', 'Username must start with @'),
+  FieldValidation.pattern(/^@[a-zA-Z0-9_]+$/, 'Invalid username format')
+]
+```
+
+### Number Validators
+
+```typescript
+const ageValidations = [
+  FieldValidation.min(0, 'Age cannot be negative'),
+  FieldValidation.max(120, 'Age must be less than 120'),
+  FieldValidation.integer('Age must be a whole number')
+]
+
+const priceValidations = [
+  FieldValidation.positive('Price must be positive'),
+  FieldValidation.between(0.01, 1000000, 'Price must be between $0.01 and $1,000,000')
+]
+
+const quantityValidations = [
+  FieldValidation.nonNegative('Quantity cannot be negative'),
+  FieldValidation.integer('Quantity must be a whole number')
+]
+```
+
+### Generic Validators
+
+```typescript
+const roleValidations = [
+  FieldValidation.oneOf(
+    ['admin', 'editor', 'viewer'],
+    'Role must be admin, editor, or viewer'
+  )
+]
+```
+
+## Validating Fields
+
+### Synchronous Validation
+
+Use the `validate()` method to run validations:
+
+```typescript
+import type { Validation } from 'foldkit/fieldValidation'
+
+const emailValidations: ReadonlyArray<Validation<string>> = [
+  FieldValidation.required('Email is required'),
+  FieldValidation.email('Invalid email address')
+]
+
+const validateEmail = StringField.validate(emailValidations)
+
+// In your update function:
+const UpdatedEmail = m('UpdatedEmail', { value: S.String })
+
+const update = (model: Model, message: Message) =>
+  M.value(message).pipe(
+    M.tagsExhaustive({
+      UpdatedEmail: ({ value }) => [
+        evo(model, {
+          email: () => validateEmail(value)
+        }),
+        []
+      ],
+      // ...
+    })
+  )
+```
+
+The `validate()` method stops at the first validation error.
+
+### Validate All Rules
+
+Use `validateAll()` to collect all validation errors:
+
+```typescript
+const validateEmailAll = StringField.validateAll(emailValidations)
+
+// Returns Invalid with all error messages
+const result = validateEmailAll('bad')
+// { _tag: 'Invalid', value: 'bad', errors: ['Email is required', 'Invalid email address'] }
+```
+
+## Async Validation
+
+For validations requiring API calls (like checking username availability):
+
+```typescript
+import { Effect, Duration } from 'effect'
+import { Command } from 'foldkit/command'
+
+const ValidatedEmail = m('ValidatedEmail', {
+  validationId: S.Number,
+  field: StringField.Union
+})
+
+const checkEmailAvailability = (
+  email: string,
+  validationId: number
+): Command<typeof ValidatedEmail> =>
+  Effect.gen(function* () {
+    yield* Effect.sleep(Duration.millis(500))
+    
+    const isAvailable = yield* checkEmailApi(email)
+    
+    if (isAvailable) {
+      return ValidatedEmail({
+        validationId,
+        field: StringField.Valid({ value: email })
+      })
+    } else {
+      return ValidatedEmail({
+        validationId,
+        field: StringField.Invalid({
+          value: email,
+          errors: ['This email is already registered']
+        })
+      })
+    }
+  })
+```
+
+### Handling Async Validation
+
+```typescript
+import { Number } from 'effect'
+
+const Model = S.Struct({
+  email: StringField.Union,
+  emailValidationId: S.Number  // Track validation requests
+})
+
+const update = (model: Model, message: Message) =>
+  M.value(message).pipe(
+    M.tagsExhaustive({
+      UpdatedEmail: ({ value }) => {
+        const syncResult = validateEmail(value)
+        const validationId = Number.increment(model.emailValidationId)
+        
+        if (syncResult._tag === 'Valid') {
+          // Sync validation passed, start async check
+          return [
+            evo(model, {
+              email: () => StringField.Validating({ value }),
+              emailValidationId: () => validationId
+            }),
+            [checkEmailAvailability(value, validationId)]
+          ]
+        } else {
+          // Sync validation failed
+          return [
+            evo(model, {
+              email: () => syncResult,
+              emailValidationId: () => validationId
+            }),
+            []
+          ]
+        }
+      },
+      
+      ValidatedEmail: ({ validationId, field }) => {
+        // Only update if this is the most recent validation
+        if (validationId === model.emailValidationId) {
+          return [
+            evo(model, {
+              email: () => field
+            }),
+            []
+          ]
+        } else {
+          return [model, []]
+        }
+      }
+    })
+  )
+```
+
+<Tip>
+Use a validation ID to ignore stale async validation responses. This prevents race conditions when the user types quickly.
+</Tip>
+
+## View Helpers
+
+Render fields with visual feedback:
+
+```typescript
+import { Match as M } from 'effect'
+import { Html, html } from 'foldkit/html'
+
+const { div, label, input, span, empty, Class, For, Id, Type, Value, OnInput } = html<Message>()
+
+const fieldView = (
+  id: string,
+  labelText: string,
+  field: StringField,
+  onUpdate: (value: string) => Message,
+  type: 'text' | 'email' = 'text'
+): Html => {
+  const { value } = field
+  
+  const getBorderClass = () =>
+    M.value(field).pipe(
+      M.tagsExhaustive({
+        NotValidated: () => 'border-gray-300',
+        Validating: () => 'border-blue-300',
+        Valid: () => 'border-green-500',
+        Invalid: () => 'border-red-500'
+      })
+    )
+  
+  const inputClass = `px-3 py-2 border rounded ${getBorderClass()}`
+  
+  return div(
+    [Class('mb-4')],
+    [
+      label([For(id), Class('block font-medium mb-2')], [labelText]),
+      
+      input([
+        Id(id),
+        Type(type),
+        Value(value),
+        Class(inputClass),
+        OnInput(onUpdate)
+      ]),
+      
+      // Status indicator
+      M.value(field).pipe(
+        M.tagsExhaustive({
+          NotValidated: () => empty,
+          Validating: () =>
+            span([Class('text-blue-600 text-sm')], ['Checking...']),
+          Valid: () =>
+            span([Class('text-green-600 text-sm')], ['✓']),
+          Invalid: ({ errors }) =>
+            div(
+              [Class('text-red-600 text-sm mt-1')],
+              [Array.headNonEmpty(errors)]
+            )
+        })
+      )
+    ]
+  )
+}
+```
+
+## Form Validation
+
+Check if all fields are valid before submitting:
+
+```typescript
+import { Array } from 'effect'
+
+const isFormValid = (model: Model): boolean =>
+  Array.every(
+    [model.name, model.email, model.age],
+    field => field._tag === 'Valid'
+  )
+
+const update = (model: Model, message: Message) =>
+  M.value(message).pipe(
+    M.tagsExhaustive({
+      ClickedSubmit: () => {
+        if (!isFormValid(model)) {
+          return [model, []]
+        }
+        
+        return [
+          evo(model, {
+            submission: () => Submitting()
+          }),
+          [submitForm(model)]
+        ]
+      },
+      // ...
+    })
+  )
+```
+
+## Custom Validation Messages
+
+Validation messages can be static strings or functions:
+
+```typescript
+// Static message
+FieldValidation.required('This field is required')
+
+// Dynamic message (receives the invalid value)
+FieldValidation.minLength(
+  10,
+  (value: string) => `Password must be at least 10 characters (currently ${value.length})`
+)
+```
+
+## Complete Example
+
+```typescript
+import { Schema as S, Effect, Match as M, Array } from 'effect'
+import { Runtime, FieldValidation } from 'foldkit'
+import { makeField, type Validation } from 'foldkit/fieldValidation'
+import { html } from 'foldkit/html'
+import { m } from 'foldkit/message'
+
+const StringField = makeField(S.String)
+type StringField = typeof StringField.Union.Type
+
+// Model
+const Model = S.Struct({
+  email: StringField.Union,
+  password: StringField.Union
+})
+
+type Model = typeof Model.Type
+
+// Validations
+const emailValidations: ReadonlyArray<Validation<string>> = [
+  FieldValidation.required('Email is required'),
+  FieldValidation.email('Please enter a valid email')
+]
+
+const passwordValidations: ReadonlyArray<Validation<string>> = [
+  FieldValidation.required('Password is required'),
+  FieldValidation.minLength(8, 'Password must be at least 8 characters')
+]
+
+const validateEmail = StringField.validate(emailValidations)
+const validatePassword = StringField.validate(passwordValidations)
+
+// Messages
+const UpdatedEmail = m('UpdatedEmail', { value: S.String })
+const UpdatedPassword = m('UpdatedPassword', { value: S.String })
+const ClickedSubmit = m('ClickedSubmit')
+
+// Init
+const init = (): [Model, ReadonlyArray<Command<Message>>] => [
+  {
+    email: StringField.NotValidated({ value: '' }),
+    password: StringField.NotValidated({ value: '' })
+  },
+  []
+]
+
+// Update
+const update = (model: Model, message: Message) =>
+  M.value(message).pipe(
+    M.tagsExhaustive({
+      UpdatedEmail: ({ value }) => [
+        evo(model, { email: () => validateEmail(value) }),
+        []
+      ],
+      
+      UpdatedPassword: ({ value }) => [
+        evo(model, { password: () => validatePassword(value) }),
+        []
+      ],
+      
+      ClickedSubmit: () => {
+        const isValid = Array.every(
+          [model.email, model.password],
+          field => field._tag === 'Valid'
+        )
+        
+        return isValid ? [model, [submitForm(model)]] : [model, []]
+      }
+    })
+  )
+```
+
+## API Reference
+
+### String Validators
+
+- `required(message?)` — Non-empty string
+- `minLength(min, message?)` — Minimum length
+- `maxLength(max, message?)` — Maximum length
+- `pattern(regex, message?)` — Regex match
+- `email(message?)` — Email format
+- `url(message?)` — URL format
+- `startsWith(prefix, message?)` — Starts with prefix
+- `endsWith(suffix, message?)` — Ends with suffix
+- `includes(substring, message?)` — Contains substring
+- `equals(expected, message?)` — Exact match
+
+### Number Validators
+
+- `min(num, message?)` — Minimum value
+- `max(num, message?)` — Maximum value
+- `between(min, max, message?)` — Range check
+- `positive(message?)` — Greater than zero
+- `nonNegative(message?)` — Zero or greater
+- `integer(message?)` — Whole number
+
+### Generic Validators
+
+- `oneOf(values, message?)` — Must be one of specified values
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="UI Components" icon="cubes" href="/guides/ui-components">
+    Explore Foldkit's headless UI component library
+  </Card>
+  <Card title="Effects" icon="bolt" href="/guides/effects">
+    Learn about commands and side effects
+  </Card>
+</CardGroup>

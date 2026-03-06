@@ -1,0 +1,324 @@
+---
+title: Commands
+description: Execute side effects that produce messages using Effect-based commands
+---
+
+Commands are Effects that perform side effects and return messages. They're the only way to interact with the outside world — network requests, timers, random values, and browser APIs all go through commands.
+
+## What is a Command?
+
+A command is an `Effect.Effect` that produces a message:
+
+```typescript
+import { Effect } from 'effect'
+import { Command } from 'foldkit/command'
+
+type Command<T, E = never, R = never> = Effect.Effect<T, E, R>
+```
+
+The type parameters are:
+- `T` — The message type(s) this command produces
+- `E` — The error channel (usually `never` after catching)
+- `R` — The Effect context (services, resources)
+
+## Basic Commands
+
+Commands are returned from update:
+
+```typescript
+import { Clock, Effect } from 'effect'
+
+M.tagsExhaustive({
+  ClickedFetch: () => [
+    model,
+    [
+      Effect.gen(function* () {
+        const timestamp = yield* Clock.currentTimeMillis
+        return GotTimestamp({ timestamp })
+      }),
+    ],
+  ],
+})
+```
+
+The runtime executes commands asynchronously and dispatches the returned message.
+
+## Commands with External APIs
+
+Use Effect's platform libraries for HTTP, filesystem, and other I/O:
+
+```typescript packages/examples/auth/src/command.ts
+import { KeyValueStore } from '@effect/platform'
+import { BrowserKeyValueStore } from '@effect/platform-browser'
+import { Effect, Schema as S } from 'effect'
+import { Command } from 'foldkit/command'
+
+const saveSession = (
+  session: Session,
+): Command<typeof SavedSession | typeof FailedSessionSave> =>
+  Effect.gen(function* () {
+    const store = yield* KeyValueStore.KeyValueStore
+    yield* store.set(
+      'session',
+      S.encodeSync(S.parseJson(Session))(session),
+    )
+    return SavedSession()
+  }).pipe(
+    Effect.catchAll(error =>
+      Effect.succeed(FailedSessionSave({ error: String(error) })),
+    ),
+    Effect.provide(BrowserKeyValueStore.layerLocalStorage),
+  )
+```
+
+Notice:
+- Commands use `Effect.gen` for imperative-style async code
+- `yield*` unwraps Effects
+- `Effect.catchAll` converts errors to success messages
+- `Effect.provide` injects required services
+
+## Error Handling
+
+Commands should never fail. Catch errors and convert them to messages:
+
+```typescript
+import { Effect } from 'effect'
+
+const fetchData = (): Command<typeof ReceivedData | typeof FailedToFetch> =>
+  Effect.gen(function* () {
+    const response = yield* Effect.tryPromise(() =>
+      fetch('/api/data')
+    )
+    const data = yield* Effect.tryPromise(() => response.json())
+    return ReceivedData({ data })
+  }).pipe(
+    Effect.catchAll(error =>
+      Effect.succeed(FailedToFetch({ error: String(error) })),
+    ),
+  )
+```
+
+The `Effect.catchAll` ensures the command always produces a message, even on failure.
+
+## Real-World Example: Todo App
+
+Here's how the todo app generates IDs and saves to localStorage:
+
+```typescript packages/examples/todo/src/main.ts
+import { KeyValueStore } from '@effect/platform'
+import { BrowserKeyValueStore } from '@effect/platform-browser'
+import { Clock, Effect, Random, Schema as S } from 'effect'
+import { Command } from 'foldkit/command'
+
+const randomId = Effect.gen(function* () {
+  const randomValue = yield* Random.next
+  return randomValue.toString(36).substring(2, 15)
+})
+
+const generateTodoData = (text: string): Command<typeof GotNewTodoData> =>
+  Effect.gen(function* () {
+    const id = yield* randomId
+    const timestamp = yield* Clock.currentTimeMillis
+    return GotNewTodoData({ id, timestamp, text })
+  })
+
+const saveTodos = (todos: Todos): Command<typeof SavedTodos> =>
+  Effect.gen(function* () {
+    const store = yield* KeyValueStore.KeyValueStore
+    yield* store.set('todos', S.encodeSync(S.parseJson(Todos))(todos))
+    return SavedTodos({ todos })
+  }).pipe(
+    Effect.catchAll(() => Effect.succeed(SavedTodos({ todos }))),
+    Effect.provide(BrowserKeyValueStore.layerLocalStorage),
+  )
+```
+
+Update returns these commands:
+
+```typescript
+M.tagsExhaustive({
+  AddedTodo: () => {
+    if (String.isEmpty(String.trim(model.newTodoText))) {
+      return [model, []]
+    }
+    return [model, [generateTodoData(String.trim(model.newTodoText))]]
+  },
+
+  GotNewTodoData: ({ id, timestamp, text }) => {
+    const newTodo = { id, text, completed: false, createdAt: timestamp }
+    const updatedTodos = [...model.todos, newTodo]
+    return [
+      evo(model, {
+        todos: () => updatedTodos,
+        newTodoText: () => '',
+      }),
+      [saveTodos(updatedTodos)],
+    ]
+  },
+})
+```
+
+The flow is:
+1. User clicks "Add" → `AddedTodo` message
+2. Update validates input and returns `generateTodoData` command
+3. Command generates ID and timestamp, returns `GotNewTodoData` message
+4. Update adds todo and returns `saveTodos` command
+5. Command persists to localStorage, returns `SavedTodos` message
+6. Update receives `SavedTodos` (currently a no-op)
+
+## Command Type Signatures
+
+Commands return specific message types:
+
+```typescript
+import { Command } from 'foldkit/command'
+
+// Single message type
+const fetchUser = (id: string): Command<typeof ReceivedUser> =>
+  Effect.succeed(ReceivedUser({ id, name: 'Alice' }))
+
+// Union of possible outcomes
+const login = (
+  email: string,
+  password: string,
+): Command<typeof LoginSucceeded | typeof LoginFailed> =>
+  Effect.gen(function* () {
+    // ... authentication logic
+    if (authenticated) {
+      return LoginSucceeded({ sessionId })
+    } else {
+      return LoginFailed({ error: 'Invalid credentials' })
+    }
+  })
+```
+
+Never return the full `Message` type from commands — return the specific schemas the command can produce.
+
+## Commands for Side Effects Only
+
+Some commands exist only for their effect (logging, analytics):
+
+```typescript packages/examples/auth/src/command.ts
+import { Console, Effect } from 'effect'
+import { Command } from 'foldkit/command'
+
+const logError = (
+  ...args: ReadonlyArray<unknown>
+): Command<typeof NoOp> => 
+  Console.error(...args).pipe(Effect.as(NoOp()))
+```
+
+The `NoOp` message indicates "no meaningful result":
+
+```typescript
+const NoOp = m('NoOp')
+
+M.tagsExhaustive({
+  NoOp: () => [model, []],
+  // ...
+})
+```
+
+## Command Composition
+
+Combine multiple commands:
+
+```typescript
+import { Effect } from 'effect'
+
+const initializeApp = (): Command<Message> =>
+  Effect.gen(function* () {
+    const session = yield* loadSession()
+    const config = yield* loadConfig()
+    return Initialized({ session, config })
+  })
+```
+
+Or return multiple commands from update:
+
+```typescript
+M.tagsExhaustive({
+  ClickedLogin: () => [
+    model,
+    [
+      authenticateUser(model.email, model.password),
+      trackEvent('login_attempt'),
+    ],
+  ],
+})
+```
+
+## Navigation Commands
+
+Use navigation helpers for URL changes:
+
+```typescript
+import { pushUrl, replaceUrl } from 'foldkit/navigation'
+import { Effect } from 'effect'
+
+M.tagsExhaustive({
+  ClickedNavigate: ({ path }) => [
+    model,
+    [pushUrl(path).pipe(Effect.as(NoOp()))],
+  ],
+  
+  LoggedOut: () => [
+    initialModel,
+    [replaceUrl('/login').pipe(Effect.as(NoOp()))],
+  ],
+})
+```
+
+- `pushUrl` — Adds to browser history (back button works)
+- `replaceUrl` — Replaces current history entry (back button skips)
+
+## Resources and Services
+
+Commands can require services via the `R` channel:
+
+```typescript
+import { Context, Effect, Layer } from 'effect'
+
+class AudioService extends Context.Tag('AudioService')<
+  AudioService,
+  { play: (sound: string) => Effect.Effect<void> }
+>() {}
+
+const playSound = (sound: string): Command<typeof NoOp, never, AudioService> =>
+  Effect.gen(function* () {
+    const audio = yield* AudioService
+    yield* audio.play(sound)
+    return NoOp()
+  })
+```
+
+Provide the service via the `resources` config in `makeElement` or `makeApplication`.
+
+## Testing Commands
+
+Commands are just Effects, so they're easy to test:
+
+```typescript
+import { Effect } from 'effect'
+
+test('generateTodoData creates message with id and timestamp', async () => {
+  const command = generateTodoData('Buy milk')
+  const message = await Effect.runPromise(command)
+  
+  expect(message._tag).toBe('GotNewTodoData')
+  expect(message.text).toBe('Buy milk')
+  expect(message.id).toMatch(/^[a-z0-9]+$/)
+  expect(message.timestamp).toBeGreaterThan(0)
+})
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Subscriptions" icon="arrows-rotate" href="/concepts/subscriptions">
+    Stream events based on model state changes
+  </Card>
+  <Card title="Managed Resources" icon="plug" href="/concepts/managed-resources">
+    Acquire and release resources tied to model state
+  </Card>
+</CardGroup>

@@ -1,0 +1,199 @@
+---
+title: Message
+description: Schema utilities for defining type-safe messages in Foldkit applications
+---
+
+The Message module provides the `m` function for creating callable message schemas that follow the Elm Architecture pattern. Messages represent facts about what happened in your application.
+
+## m
+
+Creates a callable tagged struct for message types. This wraps Effect's `Schema.TaggedStruct` to enable direct constructor calls.
+
+```typescript
+import { m } from 'foldkit/message'
+import { Schema as S } from 'effect'
+
+// Message without fields
+const ClickedReset = m('ClickedReset')
+const message1 = ClickedReset() // { _tag: 'ClickedReset' }
+
+// Message with fields
+const ChangedCount = m('ChangedCount', { count: S.Number })
+const message2 = ChangedCount({ count: 5 }) // { _tag: 'ChangedCount', count: 5 }
+
+// Message with complex fields
+const ReceivedData = m('ReceivedData', {
+  data: S.Array(S.String),
+  timestamp: S.Number,
+})
+```
+
+### Parameters
+
+<ParamField path="tag" type="string" required>
+  The discriminant tag for this message type. Should be a descriptive, past-tense verb phrase (e.g., `'ClickedSubmit'`, `'ReceivedResponse'`, `'ChangedInput'`).
+</ParamField>
+
+<ParamField path="fields" type="Schema.Struct.Fields">
+  Optional object defining the fields for this message using Effect Schema types.
+</ParamField>
+
+### Returns
+
+<ResponseField name="schema" type="CallableTaggedStruct">
+  A callable schema that can be used both as a Schema and as a constructor function
+</ResponseField>
+
+## Message Patterns
+
+Messages in Foldkit should be named as past-tense events that describe what happened, not imperative commands. The verb prefix helps categorize messages:
+
+### Click Events
+
+```typescript
+const ClickedLogin = m('ClickedLogin')
+const ClickedLogout = m('ClickedLogout')
+const ClickedSubmit = m('ClickedSubmit')
+```
+
+### Input Changes
+
+```typescript
+const ChangedUsername = m('ChangedUsername', { value: S.String })
+const ChangedEmail = m('ChangedEmail', { value: S.String })
+const ToggledCheckbox = m('ToggledCheckbox', { checked: S.Boolean })
+```
+
+### Async Operations
+
+```typescript
+// Request initiated
+const RequestedData = m('RequestedData', { id: S.String })
+
+// Success response
+const ReceivedData = m('ReceivedData', { 
+  data: S.Array(S.String) 
+})
+
+// Error response
+const FailedToFetchData = m('FailedToFetchData', { 
+  error: S.String 
+})
+```
+
+### Navigation
+
+```typescript
+const ClickedLink = m('ClickedLink', { 
+  request: UrlRequest 
+})
+
+const ChangedUrl = m('ChangedUrl', { 
+  url: Url 
+})
+```
+
+## Message Union
+
+Combine individual message schemas into a union type:
+
+```typescript
+import { m } from 'foldkit/message'
+import { Schema as S } from 'effect'
+
+// Define individual messages
+const Increment = m('Increment')
+const Decrement = m('Decrement')
+const SetCount = m('SetCount', { count: S.Number })
+const Reset = m('Reset')
+
+// Create the union
+const Message = S.Union(Increment, Decrement, SetCount, Reset)
+type Message = typeof Message.Type
+```
+
+## Using Messages in Update
+
+Messages flow into your update function where you match on the `_tag` to handle each case:
+
+```typescript
+import { Match as M } from 'effect'
+
+const update = (model: Model, message: Message): [Model, Command[]] => {
+  return M.value(message).pipe(
+    M.when({ _tag: 'Increment' }, () => [
+      { ...model, count: model.count + 1 },
+      [],
+    ]),
+    M.when({ _tag: 'Decrement' }, () => [
+      { ...model, count: model.count - 1 },
+      [],
+    ]),
+    M.when({ _tag: 'SetCount' }, ({ count }) => [
+      { ...model, count },
+      [],
+    ]),
+    M.when({ _tag: 'Reset' }, () => [
+      { ...model, count: 0 },
+      [],
+    ]),
+    M.exhaustive,
+  )
+}
+```
+
+## Commands Returning Messages
+
+Commands are Effects that produce messages. Use Effect's error handling to catch failures and convert them to messages:
+
+```typescript
+import { Effect } from 'effect'
+import { Command } from 'foldkit/command'
+
+const fetchUserData = (
+  userId: string
+): Command<typeof ReceivedData | typeof FailedToFetchData> =>
+  Effect.gen(function* () {
+    const response = yield* Effect.tryPromise({
+      try: () => fetch(`/api/users/${userId}`),
+      catch: error => new Error(String(error)),
+    })
+    
+    const data = yield* Effect.tryPromise({
+      try: () => response.json(),
+      catch: error => new Error(String(error)),
+    })
+    
+    return ReceivedData({ data })
+  }).pipe(
+    Effect.catchAll(error =>
+      Effect.succeed(FailedToFetchData({ error: error.message }))
+    )
+  )
+```
+
+## Type Utilities
+
+Extract the TypeScript type from a message schema:
+
+```typescript
+const ClickedButton = m('ClickedButton', { id: S.String })
+
+// Extract the type
+type ClickedButton = typeof ClickedButton.Type
+// Result: { _tag: 'ClickedButton', id: string }
+```
+
+## Best Practices
+
+1. **Name messages as past-tense events**: `ClickedSubmit` not `Submit`, `ReceivedData` not `FetchData`
+
+2. **Messages are facts, not commands**: They describe what happened, not what should happen. The update function decides what to do.
+
+3. **Keep messages focused**: Each message should represent a single event or outcome.
+
+4. **Use descriptive field names**: Prefer `{ username: string }` over `{ value: string }` when the meaning is specific.
+
+5. **Handle all error cases**: When commands can fail, create separate success and error messages.
+
+6. **Extract to message.ts for reuse**: If your commands need to import message constructors, extract messages to a separate file to avoid circular dependencies.

@@ -1,0 +1,326 @@
+---
+title: Subscription
+description: Reactive bindings between model state and long-running streams of commands
+---
+
+Subscriptions are reactive bindings that connect your model state to long-running streams of commands. They're perfect for event sources that emit continuously, such as keyboard input, WebSocket messages, time-based events, or browser events.
+
+## Overview
+
+Subscriptions watch your model for changes and automatically manage streams based on extracted dependencies. When dependencies change, the old stream is terminated and a new one is created.
+
+```typescript
+import { Subscription } from 'foldkit/subscription'
+import { Schema as S, Stream } from 'effect'
+
+// Define dependencies schema
+const SubscriptionDeps = S.Struct({
+  time: S.Option(S.Struct({
+    interval: S.Number,
+  })),
+})
+
+// Create subscriptions
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message
+>({
+  time: {
+    modelToDependencies: model => model.timer,
+    depsToStream: deps =>
+      Stream.repeatWithSchedule(
+        Effect.succeed(Tick()),
+        Schedule.spaced(deps.interval)
+      )
+  },
+})
+```
+
+## makeSubscriptions
+
+Creates type-safe subscription configurations from a dependency schema.
+
+```typescript
+import { Subscription } from 'foldkit/subscription'
+import { Schema as S } from 'effect'
+
+const SubscriptionDeps = S.Struct({
+  keyboard: S.Option(S.Null),
+  websocket: S.Option(S.Struct({ url: S.String })),
+})
+
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message
+>({
+  keyboard: {
+    modelToDependencies: model => model.keyboardActive ? Option.some(null) : Option.none(),
+    depsToStream: () => keyboardStream,
+  },
+  websocket: {
+    modelToDependencies: model => model.websocketConfig,
+    depsToStream: config => websocketStream(config.url),
+  },
+})
+```
+
+### Parameters
+
+<ParamField path="SubscriptionDeps" type="Schema.Struct" required>
+  A Schema struct where each field's type represents the dependencies for one subscription. Use `S.Option(...)` to make subscriptions conditional.
+</ParamField>
+
+### Returns
+
+A function that accepts subscription configurations and returns a `Subscriptions` object.
+
+<Expandable title="Configuration object">
+  <ParamField path="modelToDependencies" type="(model: Model) => Deps" required>
+    Extracts dependencies from the model. Return `Option.none()` to deactivate the subscription, or `Option.some(deps)` to activate/update it.
+  </ParamField>
+
+  <ParamField path="depsToStream" type="(deps: Deps) => Stream" required>
+    Creates a stream of commands from the dependencies. Called when dependencies change.
+  </ParamField>
+</Expandable>
+
+## Subscription Type
+
+The core subscription type:
+
+```typescript
+type Subscription<Model, Message, StreamDeps, Resources = never> = {
+  readonly modelToDependencies: (model: Model) => StreamDeps
+  readonly depsToStream: (
+    deps: StreamDeps,
+  ) => Stream.Stream<Command<Message, never, Resources>, never, Resources>
+}
+```
+
+## Common Patterns
+
+### Keyboard Events
+
+```typescript
+import { Stream, Effect } from 'effect'
+import { Subscription } from 'foldkit/subscription'
+
+const SubscriptionDeps = S.Struct({
+  keyboard: S.Option(S.Null),
+})
+
+const keyboardStream = Stream.async<Command<typeof PressedKey>>((emit) => {
+  const handler = (event: KeyboardEvent) => {
+    emit.single(Effect.succeed(PressedKey({ key: event.key })))
+  }
+  
+  window.addEventListener('keydown', handler)
+  
+  return Effect.sync(() => {
+    window.removeEventListener('keydown', handler)
+  })
+})
+
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message
+>({
+  keyboard: {
+    modelToDependencies: model =>
+      model.route._tag === 'Game' ? Option.some(null) : Option.none(),
+    depsToStream: () => keyboardStream,
+  },
+})
+```
+
+### Timers and Intervals
+
+```typescript
+import { Stream, Effect, Schedule } from 'effect'
+import { Subscription } from 'foldkit/subscription'
+
+const SubscriptionDeps = S.Struct({
+  timer: S.Option(S.Struct({
+    interval: S.Number,
+  })),
+})
+
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message
+>({
+  timer: {
+    modelToDependencies: model => model.timerConfig,
+    depsToStream: ({ interval }) =>
+      Stream.repeatWithSchedule(
+        Effect.succeed(Tick()),
+        Schedule.spaced(`${interval} millis`)
+      ),
+  },
+})
+```
+
+### WebSocket Connections
+
+```typescript
+import { Stream, Effect, Queue } from 'effect'
+import { Subscription } from 'foldkit/subscription'
+
+const SubscriptionDeps = S.Struct({
+  websocket: S.Option(S.Struct({
+    url: S.String,
+  })),
+})
+
+const websocketStream = (url: string) =>
+  Stream.async<Command<typeof ReceivedMessage | typeof WebSocketClosed>>((emit) => {
+    const ws = new WebSocket(url)
+    
+    ws.onmessage = (event) => {
+      emit.single(Effect.succeed(ReceivedMessage({ data: event.data })))
+    }
+    
+    ws.onclose = () => {
+      emit.single(Effect.succeed(WebSocketClosed()))
+    }
+    
+    return Effect.sync(() => {
+      ws.close()
+    })
+  })
+
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message
+>({
+  websocket: {
+    modelToDependencies: model => model.websocketUrl,
+    depsToStream: ({ url }) => websocketStream(url),
+  },
+})
+```
+
+### Mouse Position
+
+```typescript
+import { Stream, Effect } from 'effect'
+import { Subscription } from 'foldkit/subscription'
+
+const SubscriptionDeps = S.Struct({
+  mouse: S.Option(S.Null),
+})
+
+const mouseStream = Stream.async<Command<typeof MovedMouse>>((emit) => {
+  const handler = (event: MouseEvent) => {
+    emit.single(
+      Effect.succeed(
+        MovedMouse({ x: event.clientX, y: event.clientY })
+      )
+    )
+  }
+  
+  window.addEventListener('mousemove', handler)
+  
+  return Effect.sync(() => {
+    window.removeEventListener('mousemove', handler)
+  })
+})
+
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message
+>({
+  mouse: {
+    modelToDependencies: model =>
+      model.trackMouse ? Option.some(null) : Option.none(),
+    depsToStream: () => mouseStream,
+  },
+})
+```
+
+### Animation Frame
+
+```typescript
+import { Stream, Effect } from 'effect'
+import { Subscription } from 'foldkit/subscription'
+
+const SubscriptionDeps = S.Struct({
+  animation: S.Option(S.Null),
+})
+
+const animationStream = Stream.async<Command<typeof AnimationFrame>>((emit) => {
+  let rafId: number
+  let running = true
+  
+  const frame = (timestamp: number) => {
+    if (running) {
+      emit.single(Effect.succeed(AnimationFrame({ timestamp })))
+      rafId = requestAnimationFrame(frame)
+    }
+  }
+  
+  rafId = requestAnimationFrame(frame)
+  
+  return Effect.sync(() => {
+    running = false
+    cancelAnimationFrame(rafId)
+  })
+})
+
+const subscriptions = Subscription.makeSubscriptions(SubscriptionDeps)<
+  Model,
+  Message
+>({
+  animation: {
+    modelToDependencies: model =>
+      model.animating ? Option.some(null) : Option.none(),
+    depsToStream: () => animationStream,
+  },
+})
+```
+
+## Lifecycle
+
+The runtime manages subscription lifecycle automatically:
+
+1. **Initial activation**: When `modelToDependencies` first returns `Option.some(deps)`, the stream is created and started
+
+2. **Dependency change**: When dependencies change structurally (using Schema equivalence), the old stream is terminated and a new one is created
+
+3. **Deactivation**: When `modelToDependencies` returns `Option.none()`, the stream is terminated
+
+4. **Reactivation**: When `modelToDependencies` returns `Option.some(deps)` again after deactivation, a new stream is created
+
+## Using in Runtime
+
+Pass subscriptions to `makeElement` or `makeApplication`:
+
+```typescript
+import { Runtime } from 'foldkit'
+
+const app = Runtime.makeApplication({
+  Model,
+  init,
+  update,
+  view,
+  container: document.getElementById('root')!,
+  browser: { /* ... */ },
+  subscriptions,
+})
+
+Runtime.run(app)
+```
+
+## Best Practices
+
+1. **Use S.Option for conditional subscriptions**: Return `Option.none()` to deactivate, `Option.some(deps)` to activate
+
+2. **Use S.Null for subscriptions without parameters**: Don't use `S.Struct({})` (no fields to compare)
+
+3. **Clean up in stream cleanup**: Return an Effect from `Stream.async` that removes event listeners or closes connections
+
+4. **Keep dependencies minimal**: Only include data that affects the stream's behavior
+
+5. **Emit commands, not messages directly**: Streams should emit `Effect.succeed(Message())`, not just `Message()`
+
+6. **Handle errors in streams**: Use `Stream.catchAll` to convert errors to messages

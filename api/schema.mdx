@@ -1,0 +1,284 @@
+---
+title: Schema
+description: Schema utilities for creating callable tagged structs in Foldkit
+---
+
+The schema module provides utilities for creating callable tagged structs that can be invoked directly as constructors, eliminating the need for `.make()` calls.
+
+## Overview
+
+Foldkit wraps Effect's `Schema.TaggedStruct` to create callable constructors. This provides a more ergonomic API for creating messages, routes, and other tagged unions.
+
+```typescript
+// Without callable wrapper
+const Clicked = S.TaggedStruct('Clicked', { x: S.Number })
+const message = Clicked.make({ x: 10 })
+
+// With callable wrapper
+const Clicked = m('Clicked', { x: S.Number })
+const message = Clicked({ x: 10 })
+```
+
+## m
+
+Creates a callable message variant using `Schema.TaggedStruct`.
+
+<ParamField path="tag" type="string" required>
+  The tag identifier for this message variant
+</ParamField>
+
+<ParamField path="fields" type="S.Struct.Fields">
+  Schema fields for the message data (optional for tag-only messages)
+</ParamField>
+
+### Returns
+
+A `CallableTaggedStruct` that can be invoked as a function to create instances.
+
+### Example
+
+```typescript
+import { m } from 'foldkit/schema'
+import { Schema as S } from 'effect'
+
+// Message with no data
+const ClickedReset = m('ClickedReset')
+ClickedReset() // { _tag: 'ClickedReset' }
+
+// Message with data fields
+const ChangedCount = m('ChangedCount', { count: S.Number })
+ChangedCount({ count: 5 }) // { _tag: 'ChangedCount', count: 5 }
+
+// Use in union
+const Message = S.Union(ClickedReset, ChangedCount)
+type Message = typeof Message.Type
+```
+
+### Usage in Applications
+
+```typescript
+// message.ts
+import { m } from 'foldkit/schema'
+import { Schema as S } from 'effect'
+
+const ClickedIncrement = m('ClickedIncrement')
+const ClickedDecrement = m('ClickedDecrement')
+const ChangedInput = m('ChangedInput', { value: S.String })
+const GotData = m('GotData', { items: S.Array(S.String) })
+
+const Message = S.Union(
+  ClickedIncrement,
+  ClickedDecrement,
+  ChangedInput,
+  GotData,
+)
+type Message = typeof Message.Type
+
+export { 
+  ClickedIncrement,
+  ClickedDecrement,
+  ChangedInput,
+  GotData,
+  Message,
+  type Message as MessageType,
+}
+```
+
+## r
+
+Creates a callable route variant using `Schema.TaggedStruct`.
+
+<ParamField path="tag" type="string" required>
+  The tag identifier for this route variant
+</ParamField>
+
+<ParamField path="fields" type="S.Struct.Fields">
+  Schema fields for route parameters (optional for routes with no params)
+</ParamField>
+
+### Returns
+
+A `CallableTaggedStruct` that can be invoked as a function to create route instances.
+
+### Example
+
+```typescript
+import { r } from 'foldkit/schema'
+import { Schema as S } from 'effect'
+
+// Route with no parameters
+const Home = r('Home')
+Home() // { _tag: 'Home' }
+
+// Route with parameters
+const UserProfile = r('UserProfile', { id: S.String })
+UserProfile({ id: 'abc123' }) // { _tag: 'UserProfile', id: 'abc123' }
+
+const BlogPost = r('BlogPost', { slug: S.String })
+BlogPost({ slug: 'hello-world' }) // { _tag: 'BlogPost', slug: 'hello-world' }
+
+// Use in union
+const Route = S.Union(Home, UserProfile, BlogPost)
+type Route = typeof Route.Type
+```
+
+### Usage with Router
+
+```typescript
+import { r } from 'foldkit/schema'
+import { route } from 'foldkit/route'
+import { Schema as S } from 'effect'
+
+// Define routes
+const Home = r('Home')
+const About = r('About')
+const Post = r('Post', { slug: S.String })
+const User = r('User', { id: S.String })
+
+const Route = S.Union(Home, About, Post, User)
+type Route = typeof Route.Type
+
+// Create router
+const parser = route.union([
+  route.path('/', Home),
+  route.path('/about', About),
+  route.path('/post/:slug', Post),
+  route.path('/user/:id', User),
+])
+```
+
+## ts
+
+Creates a callable tagged struct for non-message, non-route types.
+
+<ParamField path="tag" type="string" required>
+  The tag identifier for this struct variant
+</ParamField>
+
+<ParamField path="fields" type="S.Struct.Fields">
+  Schema fields for the struct data (optional for tag-only structs)
+</ParamField>
+
+### Returns
+
+A `CallableTaggedStruct` that can be invoked as a function to create instances.
+
+### Example
+
+```typescript
+import { ts } from 'foldkit/schema'
+import { Schema as S } from 'effect'
+
+// Loading state with no data
+const Loading = ts('Loading')
+Loading() // { _tag: 'Loading' }
+
+// Success state with data
+const Ok = ts('Ok', { data: S.String })
+Ok({ data: 'hello' }) // { _tag: 'Ok', data: 'hello' }
+
+// Error state
+const Error = ts('Error', { message: S.String })
+Error({ message: 'Failed' }) // { _tag: 'Error', message: 'Failed' }
+
+// Use in union for remote data
+const RemoteData = S.Union(Loading, Ok, Error)
+type RemoteData = typeof RemoteData.Type
+```
+
+### Usage in Field Validation
+
+```typescript
+import { ts } from 'foldkit/schema'
+import { Schema as S } from 'effect'
+
+// Field states
+const NotValidated = ts('NotValidated', { value: S.String })
+const Validating = ts('Validating', { value: S.String })
+const Valid = ts('Valid', { value: S.String })
+const Invalid = ts('Invalid', { 
+  value: S.String, 
+  errors: S.NonEmptyArray(S.String) 
+})
+
+const FieldState = S.Union(NotValidated, Validating, Valid, Invalid)
+type FieldState = typeof FieldState.Type
+
+// Create instances
+const field1 = NotValidated({ value: '' })
+const field2 = Valid({ value: 'user@example.com' })
+const field3 = Invalid({ value: 'bad', errors: ['Invalid email'] })
+```
+
+## Types
+
+### CallableTaggedStruct
+
+A `TaggedStruct` schema that can be called directly as a constructor.
+
+```typescript
+type CallableTaggedStruct<
+  Tag extends string,
+  Fields extends S.Struct.Fields,
+> = S.TaggedStruct<Tag, Fields> & 
+  ((value: Parameters<S.TaggedStruct<Tag, Fields>['make']>[0]) => 
+    S.Simplify<S.Struct.Type<{ readonly _tag: S.tag<Tag> } & Fields>>)
+```
+
+This type combines:
+- All properties and methods from `S.TaggedStruct`
+- A call signature for creating instances without `.make()`
+
+## Choosing the Right Helper
+
+| Helper | Use Case | Example |
+|--------|----------|----------|
+| `m` | Application messages (events, user actions) | `ClickedButton`, `GotResponse`, `ChangedInput` |
+| `r` | Route definitions | `Home`, `UserProfile`, `BlogPost` |
+| `ts` | Other tagged unions (states, field variants) | `Loading`, `Valid`, `Error` |
+
+## Complete Example
+
+```typescript
+import { m, r, ts } from 'foldkit/schema'
+import { Schema as S } from 'effect'
+
+// Messages
+const Increment = m('Increment')
+const Decrement = m('Decrement')
+const SetCount = m('SetCount', { value: S.Number })
+
+const Message = S.Union(Increment, Decrement, SetCount)
+type Message = typeof Message.Type
+
+// Routes
+const Home = r('Home')
+const Counter = r('Counter', { id: S.String })
+
+const Route = S.Union(Home, Counter)
+type Route = typeof Route.Type
+
+// Remote data state
+const Idle = ts('Idle')
+const Loading = ts('Loading')
+const Success = ts('Success', { count: S.Number })
+const Failure = ts('Failure', { error: S.String })
+
+const RemoteCount = S.Union(Idle, Loading, Success, Failure)
+type RemoteCount = typeof RemoteCount.Type
+
+// Model
+const Model = S.Struct({
+  route: Route,
+  count: S.Number,
+  remoteCount: RemoteCount,
+})
+
+// Create instances
+const increment = Increment()
+const setCount = SetCount({ value: 10 })
+const home = Home()
+const counter = Counter({ id: '123' })
+const loading = Loading()
+const success = Success({ count: 42 })
+```

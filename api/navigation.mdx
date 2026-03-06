@@ -1,0 +1,368 @@
+---
+title: Navigation
+description: Imperative navigation commands for browser history and URL manipulation
+---
+
+The `Navigation` module provides Effect-based commands for managing browser history and navigation. All navigation functions return `Effect<void>` and can be composed with other commands in your update function.
+
+## Import
+
+```typescript
+import { Navigation } from 'foldkit'
+```
+
+## Core Concepts
+
+### Effect-Based Navigation
+
+Navigation commands are Effect-based, meaning they:
+- Can be composed with other effects using `Effect.all`, `pipe`, etc.
+- Integrate seamlessly with Foldkit's command system
+- Are side effects that execute outside your update function
+
+### Browser History Integration
+
+Foldkit's navigation commands work directly with the browser's History API and automatically trigger Foldkit's internal URL change handling via the `foldkit:urlchange` custom event.
+
+## Basic Example
+
+```typescript
+import { Navigation } from 'foldkit'
+import { Effect } from 'effect'
+
+const update = (message: Message, model: Model) => {
+  return Effect.Match.value(message).pipe(
+    Effect.Match.tag('ClickedUserLink', ({ userId }) => [
+      model,
+      Navigation.pushUrl(`/users/${userId}`)
+    ]),
+    Effect.Match.tag('ClickedBack', () => [
+      model,
+      Navigation.back()
+    ]),
+    Effect.Match.tag('ClickedExternalLink', ({ url }) => [
+      model,
+      Navigation.load(url)
+    ]),
+    Effect.Match.exhaustive
+  )
+}
+```
+
+## API Reference
+
+### Navigation Commands
+
+<ParamField path="pushUrl" type="function">
+  Pushes a new URL to browser history and triggers Foldkit's URL change handling. This is the most common navigation method — use it when you want users to be able to navigate back to the previous page.
+
+  **Parameters:**
+  - `url` (string): The new URL path (can be relative or absolute)
+
+  **Returns:** `Effect<void>`
+
+  **Example:**
+  ```typescript
+  // Navigate to a user profile
+  Navigation.pushUrl('/users/123')
+
+  // Navigate with query parameters
+  Navigation.pushUrl('/search?q=foldkit')
+
+  // Navigate with hash
+  Navigation.pushUrl('/docs#getting-started')
+  ```
+
+  **Use Cases:**
+  - Navigating between pages in your app
+  - Responding to user clicks on internal links
+  - Changing routes after successful form submission
+</ParamField>
+
+<ParamField path="replaceUrl" type="function">
+  Replaces the current URL in browser history and triggers Foldkit's URL change handling. Use this when you want to update the URL without creating a new history entry.
+
+  **Parameters:**
+  - `url` (string): The new URL path (can be relative or absolute)
+
+  **Returns:** `Effect<void>`
+
+  **Example:**
+  ```typescript
+  // Replace current URL after redirect
+  Navigation.replaceUrl('/dashboard')
+
+  // Update URL with new filter state
+  Navigation.replaceUrl('/products?category=electronics')
+  ```
+
+  **Use Cases:**
+  - Redirecting after authentication (so back button doesn't return to login)
+  - Updating URL to reflect filter/sort state without polluting history
+  - Replacing temporary/transient URLs with canonical ones
+</ParamField>
+
+<ParamField path="back" type="function">
+  Navigates back in browser history. Equivalent to clicking the browser's back button.
+
+  **Returns:** `Effect<void>`
+
+  **Example:**
+  ```typescript
+  // Navigate back when user clicks cancel
+  Navigation.back()
+  ```
+
+  **Use Cases:**
+  - Implementing custom back buttons
+  - Returning to previous page after canceling an action
+  - Dismissing modals that changed the URL
+</ParamField>
+
+<ParamField path="forward" type="function">
+  Navigates forward in browser history. Equivalent to clicking the browser's forward button.
+
+  **Returns:** `Effect<void>`
+
+  **Example:**
+  ```typescript
+  // Navigate forward when user clicks a custom forward button
+  Navigation.forward()
+  ```
+
+  **Use Cases:**
+  - Implementing custom forward buttons
+  - Creating custom navigation UI
+</ParamField>
+
+<ParamField path="load" type="function">
+  Performs a full page navigation to the given href. This causes a complete page reload, unlike `pushUrl` and `replaceUrl` which handle navigation within your Foldkit app.
+
+  **Parameters:**
+  - `href` (string): The URL to navigate to (can be relative, absolute, or external)
+
+  **Returns:** `Effect<void>`
+
+  **Example:**
+  ```typescript
+  // Navigate to external site
+  Navigation.load('https://github.com/foldkit')
+
+  // Force full page reload of current app
+  Navigation.load('/dashboard')
+
+  // Navigate to different subdomain
+  Navigation.load('https://blog.example.com')
+  ```
+
+  **Use Cases:**
+  - Linking to external websites
+  - Navigating to pages outside your Foldkit app
+  - Forcing a full page reload
+  - Navigating to different subdomains or protocols
+</ParamField>
+
+## Usage Patterns
+
+### Conditional Navigation
+
+Navigate based on application state:
+
+```typescript
+const update = (message: Message, model: Model) => {
+  return Effect.Match.value(message).pipe(
+    Effect.Match.tag('SubmittedForm', ({ data }) => {
+      if (model.isAuthenticated) {
+        return [
+          { ...model, formData: data },
+          Navigation.pushUrl('/dashboard')
+        ]
+      } else {
+        return [
+          { ...model, formData: data },
+          Navigation.pushUrl('/login')
+        ]
+      }
+    }),
+    Effect.Match.exhaustive
+  )
+}
+```
+
+### Navigation with Side Effects
+
+Combine navigation with other commands:
+
+```typescript
+import { Command } from 'foldkit'
+import { Effect } from 'effect'
+
+const update = (message: Message, model: Model) => {
+  return Effect.Match.value(message).pipe(
+    Effect.Match.tag('DeletedItem', ({ itemId }) => [
+      { ...model, items: model.items.filter(i => i.id !== itemId) },
+      Effect.all([
+        saveToDatabase(itemId),
+        showNotification('Item deleted'),
+        Navigation.pushUrl('/items')
+      ], { concurrency: 'unbounded' })
+    ]),
+    Effect.Match.exhaustive
+  )
+}
+```
+
+### Programmatic Routing
+
+Use Router's `build` method with navigation:
+
+```typescript
+import { Route, Navigation } from 'foldkit'
+import { pipe, Effect } from 'effect'
+
+// Define routes
+const UserProfile = Route.r('UserProfile', { id: S.String })
+
+const userRouter = pipe(
+  Route.literal('users'),
+  Route.slash(Route.string('id')),
+  Route.mapTo(UserProfile)
+)
+
+// Navigate using type-safe route building
+const update = (message: Message, model: Model) => {
+  return Effect.Match.value(message).pipe(
+    Effect.Match.tag('SelectedUser', ({ userId }) => [
+      model,
+      Navigation.pushUrl(userRouter.build({ id: userId }))
+    ]),
+    Effect.Match.exhaustive
+  )
+}
+```
+
+### Guarded Navigation
+
+Navigate only after validation:
+
+```typescript
+const update = (message: Message, model: Model) => {
+  return Effect.Match.value(message).pipe(
+    Effect.Match.tag('ClickedNext', () => {
+      const errors = validateCurrentStep(model)
+      
+      if (Array.isEmptyArray(errors)) {
+        return [
+          { ...model, step: model.step + 1 },
+          Navigation.pushUrl(`/wizard/step-${model.step + 1}`)
+        ]
+      } else {
+        return [
+          { ...model, errors },
+          Command.none
+        ]
+      }
+    }),
+    Effect.Match.exhaustive
+  )
+}
+```
+
+### Modal Navigation
+
+Update URL when opening/closing modals:
+
+```typescript
+const update = (message: Message, model: Model) => {
+  return Effect.Match.value(message).pipe(
+    Effect.Match.tag('OpenedModal', ({ modalId }) => [
+      { ...model, activeModal: Option.some(modalId) },
+      Navigation.pushUrl(`/items?modal=${modalId}`)
+    ]),
+    Effect.Match.tag('ClosedModal', () => [
+      { ...model, activeModal: Option.none() },
+      Navigation.back()
+    ]),
+    Effect.Match.exhaustive
+  )
+}
+```
+
+### Replace vs Push
+
+Understanding when to use `replaceUrl` vs `pushUrl`:
+
+```typescript
+// Use pushUrl for normal navigation
+Navigation.pushUrl('/products/123')
+// User can press back to return to previous page
+
+// Use replaceUrl for redirects
+Navigation.replaceUrl('/login')
+// Back button won't return to the protected page
+
+// Use replaceUrl for state updates
+Navigation.replaceUrl('/products?sort=price')
+// Changing sort order shouldn't create history entries
+```
+
+## Integration with Route Parsing
+
+Foldkit's navigation commands trigger URL changes that are automatically parsed by your route parser:
+
+```typescript
+import { Route, Navigation, Runtime } from 'foldkit'
+import { pipe } from 'effect'
+
+// 1. Define routes
+const parser = Route.oneOf(
+  homeRouter,
+  userRouter,
+  notFoundRouter
+)
+
+// 2. Parse URLs into route messages
+const parseRoute = Route.parseUrlWithFallback(parser, NotFound)
+
+// 3. Set up runtime with URL handling
+Runtime.run({
+  init,
+  update,
+  view,
+  onUrlChange: (url) => {
+    const route = parseRoute(url)
+    return ChangedRoute({ route })
+  }
+})
+
+// 4. Navigation commands trigger onUrlChange
+const update = (message: Message, model: Model) => {
+  return Effect.Match.value(message).pipe(
+    Effect.Match.tag('ClickedUserLink', ({ userId }) => [
+      model,
+      Navigation.pushUrl(`/users/${userId}`)
+      // This triggers onUrlChange, which parses the new URL
+      // and sends a ChangedRoute message to update
+    ]),
+    Effect.Match.exhaustive
+  )
+}
+```
+
+## Browser Compatibility
+
+All navigation commands use the standard Web History API, which is supported in all modern browsers. The commands work in:
+
+- Chrome/Edge 5+
+- Firefox 4+
+- Safari 5+
+- All modern mobile browsers
+
+## Notes
+
+- Navigation commands are synchronous operations that return `Effect<void>`
+- The `foldkit:urlchange` event is dispatched after history state changes
+- Use `pushUrl` for most navigation scenarios
+- Use `replaceUrl` when you don't want to create a history entry
+- Use `load` only for external links or full page reloads
+- Navigation commands compose naturally with other Effect-based commands

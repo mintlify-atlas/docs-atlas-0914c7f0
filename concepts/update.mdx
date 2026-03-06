@@ -1,0 +1,330 @@
+---
+title: Update
+description: Transform your model in response to messages using pure, exhaustive pattern matching
+---
+
+The update function is the heart of your application. It receives the current model and a message, then returns a new model and an array of commands to execute.
+
+## Update Signature
+
+Every update function has the same shape:
+
+```typescript
+import { Command } from 'foldkit/command'
+
+const update = (
+  model: Model,
+  message: Message,
+): [Model, ReadonlyArray<Command<Message>>] => {
+  // ...
+}
+```
+
+The return type is a tuple:
+1. The new model
+2. An array of commands (side effects that produce messages)
+
+## Basic Update with Match
+
+Use `Match.value` with `tagsExhaustive` for type-safe pattern matching:
+
+```typescript packages/examples/counter/src/main.ts
+import { Match as M } from 'effect'
+import { Command } from 'foldkit/command'
+
+const update = (
+  model: Model,
+  message: Message,
+): [Model, ReadonlyArray<Command<Message>>] =>
+  M.value(message).pipe(
+    M.withReturnType<[Model, ReadonlyArray<Command<Message>>]>(),
+    M.tagsExhaustive({
+      ClickedDecrement: () => [{ count: model.count - 1 }, []],
+      ClickedIncrement: () => [{ count: model.count + 1 }, []],
+      ClickedReset: () => [{ count: 0 }, []],
+    }),
+  )
+```
+
+`M.tagsExhaustive` requires all message variants to be handled. If you add a new message and forget to handle it, TypeScript will error.
+
+## Using Message Payloads
+
+Messages with data destructure in the pattern:
+
+```typescript
+import { M } from 'effect'
+
+M.value(message).pipe(
+  M.withReturnType<[Model, ReadonlyArray<Command<Message>>]>(),
+  M.tagsExhaustive({
+    UpdatedInput: ({ value }) => [
+      { ...model, inputValue: value },
+      [],
+    ],
+    
+    SubmittedForm: ({ email, password }) => [
+      model,
+      [loginCommand(email, password)],
+    ],
+  }),
+)
+```
+
+## Evolving Models with `evo`
+
+For complex models, use `evo` from `foldkit/struct`:
+
+```typescript packages/examples/todo/src/main.ts
+import { evo } from 'foldkit/struct'
+
+M.tagsExhaustive({
+  UpdatedNewTodo: ({ text }) => [
+    evo(model, {
+      newTodoText: () => text,
+    }),
+    [],
+  ],
+
+  ToggledTodo: ({ id }) => [
+    evo(model, {
+      todos: todos =>
+        Array.map(todos, todo =>
+          todo.id === id
+            ? evo(todo, { completed: completed => !completed })
+            : todo,
+        ),
+    }),
+    [saveTodos(model.todos)],
+  ],
+})
+```
+
+Each field receives its current value and returns the new value:
+
+```typescript
+evo(model, {
+  count: count => count + 1,        // Receives current count
+  lastUpdate: () => Date.now(),     // Ignores current value
+})
+```
+
+Fields not mentioned in `evo` are preserved.
+
+## Nested Pattern Matching
+
+Match on the model inside message handlers:
+
+```typescript packages/examples/todo/src/main.ts
+import { Match as M } from 'effect'
+
+M.tagsExhaustive({
+  SavedEdit: () =>
+    M.value(model.editing).pipe(
+      M.withReturnType<[Model, Command<typeof SavedTodos>[]]>(),
+      M.tagsExhaustive({
+        NotEditing: () => [model, []],
+
+        Editing: ({ id, text }) => {
+          if (String.isEmpty(String.trim(text))) {
+            return [
+              evo(model, { editing: () => NotEditing() }),
+              [],
+            ]
+          }
+
+          const updatedTodos = Array.map(model.todos, todo =>
+            todo.id === id
+              ? evo(todo, { text: () => String.trim(text) })
+              : todo,
+          )
+
+          return [
+            evo(model, {
+              todos: () => updatedTodos,
+              editing: () => NotEditing(),
+            }),
+            [saveTodos(updatedTodos)],
+          ]
+        },
+      }),
+    ),
+})
+```
+
+You can nest `M.value` to match on multiple discriminated unions.
+
+## Returning Commands
+
+Commands are Effects that produce messages:
+
+```typescript packages/examples/stopwatch/src/main.ts
+import { Clock, Effect } from 'effect'
+
+M.tagsExhaustive({
+  RequestedStart: () => [
+    model,
+    [
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
+        return GotStartTime({ startTime: now - model.elapsedMs })
+      }),
+    ],
+  ],
+
+  GotStartTime: ({ startTime }) => [
+    evo(model, {
+      isRunning: () => true,
+      startTime: () => startTime,
+    }),
+    [],
+  ],
+})
+```
+
+Commands always return a message. The runtime executes them asynchronously and dispatches the result.
+
+## Real-World Example: Todo App
+
+Here's a complete update function from the todo example:
+
+```typescript packages/examples/todo/src/main.ts
+import { Array, Match as M, String } from 'effect'
+import { Command } from 'foldkit/command'
+import { evo } from 'foldkit/struct'
+
+const update = (
+  model: Model,
+  message: Message,
+): [Model, ReadonlyArray<Command<Message>>] =>
+  M.value(message).pipe(
+    M.withReturnType<[Model, ReadonlyArray<Command<Message>>]>(),
+    M.tagsExhaustive({
+      NoOp: () => [model, []],
+
+      UpdatedNewTodo: ({ text }) => [
+        evo(model, { newTodoText: () => text }),
+        [],
+      ],
+
+      AddedTodo: () => {
+        if (String.isEmpty(String.trim(model.newTodoText))) {
+          return [model, []]
+        }
+        return [model, [generateTodoData(String.trim(model.newTodoText))]]
+      },
+
+      GotNewTodoData: ({ id, timestamp, text }) => {
+        const newTodo: Todo = {
+          id,
+          text,
+          completed: false,
+          createdAt: timestamp,
+        }
+        const updatedTodos = [...model.todos, newTodo]
+        return [
+          evo(model, {
+            todos: () => updatedTodos,
+            newTodoText: () => '',
+          }),
+          [saveTodos(updatedTodos)],
+        ]
+      },
+
+      DeletedTodo: ({ id }) => {
+        const updatedTodos = Array.filter(model.todos, todo => todo.id !== id)
+        return [
+          evo(model, { todos: () => updatedTodos }),
+          [saveTodos(updatedTodos)],
+        ]
+      },
+
+      ToggledTodo: ({ id }) => {
+        const updatedTodos = Array.map(model.todos, todo =>
+          todo.id === id
+            ? evo(todo, { completed: completed => !completed })
+            : todo,
+        )
+        return [
+          evo(model, { todos: () => updatedTodos }),
+          [saveTodos(updatedTodos)],
+        ]
+      },
+    }),
+  )
+```
+
+Notice the patterns:
+- Validation before side effects (`AddedTodo` checks for empty string)
+- Request/response pairs (`AddedTodo` → `generateTodoData` → `GotNewTodoData`)
+- Immutable updates with `Array.map` and `evo`
+- Commands returned alongside model updates
+
+## Nested Update Functions
+
+Large applications compose update functions:
+
+```typescript packages/examples/auth/src/page/loggedIn/update.ts
+import { Match as M, Option } from 'effect'
+import { Command } from 'foldkit/command'
+
+type UpdateReturn = [
+  Model,
+  ReadonlyArray<Command<Message>>,
+  Option.Option<OutMessage>,
+]
+const withUpdateReturn = M.withReturnType<UpdateReturn>()
+
+const update = (model: Model, message: Message): UpdateReturn =>
+  M.value(message).pipe(
+    M.tagsExhaustive({
+      GotSettingsMessage: ({ message }) =>
+        M.value(message).pipe(
+          withUpdateReturn,
+          M.tagsExhaustive({
+            ClickedLogout: () => [model, [], Option.some(RequestedLogout())],
+          }),
+        ),
+    }),
+  )
+```
+
+Child update functions can return `OutMessage` values to communicate with the parent.
+
+## Update Rules
+
+<Warning>
+Update functions must be pure:
+
+- **No side effects** — Don't call APIs, mutate DOM, or log to console
+- **No randomness** — Use commands to get random values
+- **No Date.now() or Math.random()** — Use Effect's Clock and Random
+- **Return new models** — Never mutate the input model
+</Warning>
+
+If update needs external data, return a command that fetches it:
+
+```typescript
+// ❌ Impure
+ClickedFetch: () => [
+  model,
+  fetch('/api/data').then(handleResponse), // No!
+]
+
+// ✅ Pure
+ClickedFetch: () => [
+  model,
+  [fetchData()], // Command handles the fetch
+]
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Commands" icon="terminal" href="/concepts/commands">
+    Learn how to trigger side effects from update
+  </Card>
+  <Card title="View" icon="eye" href="/concepts/view">
+    Render your model as HTML
+  </Card>
+</CardGroup>

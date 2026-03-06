@@ -1,0 +1,275 @@
+---
+title: Shopping Cart
+description: A multi-page e-commerce application with routing, state management, and cart functionality
+---
+
+The Shopping Cart example demonstrates how to build a complex multi-page application with shared state, routing, and modular architecture.
+
+## What You'll Learn
+
+- Multi-page application architecture
+- Shared state across routes
+- Domain-driven design patterns
+- Child component communication
+- Cart operations (add, remove, update quantity)
+- Checkout flow
+
+## Live Demo
+
+<Card title="Shopping Cart Demo" icon="play" href="https://foldkit.dev/examples/shopping-cart">
+  Click to see the live shopping cart example
+</Card>
+
+## Key Features
+
+- 🛍️ Product browsing with search
+- 🛒 Shopping cart management
+- 📦 Checkout flow
+- 🔍 Real-time product filtering
+- ➕ Add/remove items
+- 🔢 Quantity adjustment
+- 💰 Total price calculation
+
+## Application Structure
+
+```
+shopping-cart/
+├── src/
+│   ├── main.ts           # Main app with routing
+│   ├── domain/
+│   │   ├── cart.ts       # Cart domain logic
+│   │   └── item.ts       # Product/item types
+│   ├── page/
+│   │   ├── products.ts   # Products page
+│   │   ├── cart.ts       # Cart page
+│   │   └── checkout.ts   # Checkout page
+│   ├── data/
+│   │   └── products.ts   # Mock product data
+│   └── html.ts           # Shared HTML helpers
+```
+
+## Routes
+
+```typescript
+export const ProductsRoute = r('Products', { searchText: S.Option(S.String) })
+export const CartRoute = r('Cart')
+export const CheckoutRoute = r('Checkout')
+export const NotFoundRoute = r('NotFound', { path: S.String })
+export const AppRoute = S.Union(
+  ProductsRoute,
+  CartRoute,
+  CheckoutRoute,
+  NotFoundRoute,
+)
+```
+
+## Domain Logic
+
+The cart domain provides pure functions for cart operations:
+
+```typescript
+// domain/cart.ts
+export const Cart = Schema.Array(CartItem)
+export type Cart = typeof Cart.Type
+
+export const addItem = (item: Item) => (cart: Cart): Cart => {
+  const existingCartItem = Array.findFirst(cart, hasItemId(item.id))
+  return Option.match(existingCartItem, {
+    onNone: () => [...cart, { item, quantity: 1 }],
+    onSome: () =>
+      mapCartItem(
+        item.id,
+        evo({ quantity: Number.increment }),
+      )(cart),
+  })
+}
+
+export const removeItem = (itemId: string) => (cart: Cart): Cart =>
+  Array.filter(cart, Predicate.not(hasItemId(itemId)))
+
+export const changeQuantity = (itemId: string, quantity: number) =>
+  quantity <= 0
+    ? removeItem(itemId)
+    : mapCartItem(
+        itemId,
+        evo({ quantity: () => quantity }),
+      )
+
+export const itemQuantity = (itemId: string) => (cart: Cart): number =>
+  pipe(
+    cart,
+    Array.findFirst<CartItem>(hasItemId(itemId)),
+    Option.match({
+      onNone: () => 0,
+      onSome: ({ quantity }) => quantity,
+    }),
+  )
+
+export const totalItems = (cart: Cart) =>
+  Array.reduce(cart, 0, (total, { quantity }) => total + quantity)
+```
+
+## Main Model
+
+The main model includes the cart and delegates page-specific state:
+
+```typescript
+const Model = S.Struct({
+  route: AppRoute,
+  cart: Cart.Cart,
+  deliveryInstructions: S.String,
+  orderPlaced: S.Boolean,
+  productsPage: Products.Model,
+})
+```
+
+## Child Component Pattern
+
+The Products page is a separate module with its own Model, Message, Update, and View:
+
+```typescript
+// page/products.ts
+export const Model = S.Struct({
+  products: S.Array(Item.Item),
+  searchText: S.String,
+})
+
+export const Message = S.Union(NoOp, ChangedSearchInput)
+
+export const update =
+  (productsRouter: Route.Router<ExtractTag<AppRoute, 'Products'>>) =>
+  (model: Model, message: Message): [Model, ReadonlyArray<Command<Message>>] =>
+    // ...
+
+export const view = (
+  model: Model,
+  cart: Cart.Cart,
+  cartRouter: Route.Router<CartRoute>,
+  toMessage: (message: Message) => ParentMessage,
+  onAddToCart: (item: Item.Item) => ParentMessage,
+  onQuantityChange: (itemId: string, quantity: number) => ParentMessage,
+): Html => {
+  // ...
+}
+```
+
+The main update delegates to the child update:
+
+```typescript
+GotProductsMessage: ({ message }) => {
+  const [newProductsModel, commands] = Products.update(productsRouter)(
+    model.productsPage,
+    message,
+  )
+
+  return [
+    evo(model, {
+      productsPage: () => newProductsModel,
+    }),
+    commands.map(Effect.map(message => GotProductsMessage({ message }))),
+  ]
+}
+```
+
+And the main view calls the child view:
+
+```typescript
+const productsView = (model: Model): Html => {
+  return Products.view(
+    model.productsPage,
+    model.cart,
+    cartRouter,
+    message => GotProductsMessage({ message }),
+    item => ClickedAddToCart({ item }),
+    (itemId, quantity) => ClickedQuantityChange({ itemId, quantity }),
+  )
+}
+```
+
+## Cart Operations
+
+Adding items to cart:
+
+```typescript
+ClickedAddToCart: ({ item }) => [
+  evo(model, {
+    cart: () => Cart.addItem(item)(model.cart),
+  }),
+  [],
+]
+```
+
+Changing quantity:
+
+```typescript
+ClickedCartQuantityChange: ({ itemId, quantity }) => [
+  evo(model, {
+    cart: () => Cart.changeQuantity(itemId, quantity)(model.cart),
+  }),
+  [],
+]
+```
+
+Removing items:
+
+```typescript
+ClickedRemoveCartItem: ({ itemId }) => [
+  evo(model, {
+    cart: () => Cart.removeItem(itemId)(model.cart),
+  }),
+  [],
+]
+```
+
+## Shared State
+
+The cart state is managed in the main model and passed to child components:
+
+```typescript
+const navigationView = (currentRoute: AppRoute, cartCount: number): Html => {
+  // Shows cart count in navigation
+  return nav(
+    [Class('bg-blue-500 text-white p-4 mb-6')],
+    [
+      // ...
+      a(
+        [Href(cartRouter.build({}))],
+        cartCount > 0 ? [`Cart (${cartCount})`] : ['Cart'],
+      ),
+    ],
+  )
+}
+```
+
+## Modular Architecture Benefits
+
+- **Separation of concerns**: Each page manages its own state
+- **Reusability**: Child components can be reused
+- **Testability**: Test each module independently
+- **Type safety**: Messages are properly typed between parent/child
+- **Maintainability**: Changes to one page don't affect others
+
+## Complete Source Code
+
+<Card title="shopping-cart/" icon="github" href="https://github.com/foldkit/foldkit/tree/main/examples/shopping-cart">
+  View the complete source code on GitHub (multiple files)
+</Card>
+
+### Key Files
+
+- `src/main.ts` - Main application and routing (368 lines)
+- `src/domain/cart.ts` - Cart domain logic (65 lines)
+- `src/page/products.ts` - Products page component (220 lines)
+- `src/page/cart.ts` - Cart page component
+- `src/page/checkout.ts` - Checkout page component
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Auth" icon="lock" href="/examples/auth">
+    Add authentication with session management
+  </Card>
+  <Card title="Routing" icon="route" href="/examples/routing">
+    Learn more about routing fundamentals
+  </Card>
+</CardGroup>
